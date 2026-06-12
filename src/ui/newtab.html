@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Neuer Tab</title>
+<link rel="stylesheet" href="/fonts.css" />
+<style>
+:root {
+  --bg: #05050c;
+  --text: #eef0fa;
+  --text-2: #9aa0bb;
+  --text-3: #5c6279;
+  --acc: #00e5ff;
+  --acc2: #7c4dff;
+  --font: 'Space Grotesk', 'Segoe UI', sans-serif;
+  --font-disp: 'Orbitron', sans-serif;
+  --ease: cubic-bezier(0.33, 1, 0.4, 1);
+  --spring: cubic-bezier(0.3, 1.45, 0.45, 1);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(1100px 700px at 85% -10%, color-mix(in srgb, var(--acc2) 14%, transparent), transparent 60%),
+    radial-gradient(900px 700px at -5% 110%, color-mix(in srgb, var(--acc) 11%, transparent), transparent 60%),
+    var(--bg);
+  display: flex; align-items: center; justify-content: center;
+}
+#stars { position: fixed; inset: -40px; z-index: 0; will-change: transform; }
+/* Lesbarkeits-Schleier: dunkelt die Bildmitte hinter Uhr & Suche ab */
+#scrim {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% 44%, rgba(2,2,8,0.78) 0%, rgba(2,2,8,0.52) 32%, rgba(2,2,8,0.12) 62%, transparent 80%),
+    linear-gradient(to bottom, rgba(2,2,8,0.35) 0%, transparent 30%, transparent 60%, rgba(2,2,8,0.55) 100%);
+}
+
+.weather {
+  position: fixed; top: 22px; right: 26px; z-index: 2;
+  display: flex; align-items: center; gap: 13px;
+  padding: 11px 18px;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--acc) 16%, transparent), transparent 70%),
+    rgba(8, 8, 18, 0.62);
+  border: 1px solid color-mix(in srgb, var(--acc) 30%, transparent);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45), 0 0 26px color-mix(in srgb, var(--acc) 12%, transparent);
+  backdrop-filter: blur(22px) saturate(1.25);
+  color: var(--text);
+  animation: rise 0.7s 0.3s var(--ease) both;
+}
+.weather .w-ic {
+  width: 30px; height: 30px; flex: none;
+  stroke: var(--acc); stroke-width: 1.8; fill: none;
+  stroke-linecap: round; stroke-linejoin: round;
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--acc) 45%, transparent));
+}
+.w-text { display: flex; flex-direction: column; gap: 2px; line-height: 1.15; }
+.w-line1 { display: flex; align-items: baseline; gap: 7px; }
+.weather b { color: #fff; font-weight: 700; font-size: 18px; letter-spacing: 0.3px; }
+.weather .w-label { color: var(--text); font-size: 12.5px; font-weight: 500; }
+.weather .city {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: color-mix(in srgb, var(--acc) 55%, #ffffff);
+  font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
+}
+.weather .city svg { width: 11px; height: 11px; stroke: currentColor; stroke-width: 2; fill: none; }
+
+.wrap {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 28px;
+  width: min(860px, 92vw);
+  will-change: transform;
+}
+
+.clock {
+  font-family: var(--font-disp);
+  font-size: clamp(64px, 11vw, 118px);
+  font-weight: 700;
+  letter-spacing: 6px;
+  line-height: 1;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  background: linear-gradient(120deg, var(--acc), var(--acc2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 30px color-mix(in srgb, var(--acc) 45%, transparent))
+          drop-shadow(0 2px 14px rgba(0,0,0,0.5));
+  animation: rise 0.7s var(--ease) both;
+}
+/* Sekunden mit fester Breite, damit die Uhr nicht hin- und herwandert */
+.clock .sec {
+  display: inline-block;
+  font-size: 0.30em; font-weight: 600; letter-spacing: 2px;
+  vertical-align: super;
+  min-width: 1.7em; text-align: left;
+  margin-left: 0.14em;
+  /* eigene, garantiert sichtbare Farbe (unabhängig vom geklippten Gradient) */
+  -webkit-text-fill-color: var(--acc);
+  color: var(--acc);
+  opacity: 0.95;
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--acc) 60%, transparent));
+}
+.date {
+  font-size: 14px; letter-spacing: 3.5px; text-transform: uppercase; color: var(--text);
+  text-align: center; margin-top: 14px; opacity: 0.92;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.7);
+  animation: rise 0.7s 0.06s var(--ease) both;
+}
+.greet {
+  font-size: 21px; font-weight: 500;
+  text-shadow: 0 2px 14px rgba(0,0,0,0.6);
+  animation: rise 0.7s 0.1s var(--ease) both;
+}
+.greet b {
+  background: linear-gradient(120deg, var(--acc), var(--acc2));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  font-weight: 700;
+}
+
+.search-wrap { position: relative; width: min(640px, 88vw); animation: rise 0.7s 0.14s var(--ease) both; }
+.search {
+  width: 100%;
+  height: 54px;
+  display: flex; align-items: center; gap: 13px;
+  padding: 0 20px;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  transition: all 0.22s var(--ease);
+}
+.search-wrap.open .search, .search:focus-within {
+  border-color: color-mix(in srgb, var(--acc) 45%, transparent);
+  background: rgba(8, 8, 18, 0.75);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--acc) 10%, transparent),
+              0 20px 54px rgba(0, 0, 0, 0.5),
+              0 0 44px color-mix(in srgb, var(--acc) 12%, transparent);
+  transform: translateY(-2px);
+}
+.search svg { width: 18px; height: 18px; stroke: var(--text-3); stroke-width: 2; fill: none; stroke-linecap: round; flex: none; }
+.search:focus-within svg { stroke: var(--acc); }
+.search input {
+  flex: 1; background: none; border: none; outline: none;
+  font-family: inherit; font-size: 15.5px; color: var(--text);
+  user-select: text;
+}
+.search input::placeholder { color: var(--text-3); }
+
+.sugg {
+  position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 60;
+  border-radius: 15px;
+  background: #07070f;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(0,0,0,0.4),
+              0 0 40px color-mix(in srgb, var(--acc) 14%, transparent);
+  padding: 6px;
+  display: none;
+  animation: rise 0.16s var(--spring) both;
+}
+.sugg.open { display: block; }
+.sugg-row {
+  display: flex; align-items: center; gap: 11px;
+  height: 40px; padding: 0 13px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--text); font-size: 14px;
+}
+.sugg-row svg { width: 14px; height: 14px; stroke: var(--text-3); stroke-width: 2; fill: none; stroke-linecap: round; flex: none; }
+.sugg-row.sel { background: color-mix(in srgb, var(--acc) 22%, transparent); color: #fff; }
+.sugg-row.sel svg { stroke: var(--acc); }
+
+/* Beim Tippen die Kacheln ausblenden, damit die Vorschläge klar lesbar sind */
+.dials, .statline { transition: opacity 0.2s var(--ease), transform 0.2s var(--ease); }
+body.searching .dials, body.searching .statline {
+  opacity: 0; pointer-events: none; transform: translateY(8px);
+}
+
+.dials {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 110px));
+  justify-content: center;
+  gap: 13px;
+  width: 100%;
+  animation: rise 0.7s 0.18s var(--ease) both;
+}
+.dial {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 17px 6px 13px;
+  border-radius: 17px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  text-decoration: none; color: var(--text-2);
+  transition: all 0.18s var(--spring);
+}
+.dial:hover {
+  transform: translateY(-4px);
+  background: color-mix(in srgb, var(--acc) 9%, rgba(255,255,255,0.03));
+  border-color: color-mix(in srgb, var(--acc) 32%, transparent);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45), 0 0 26px color-mix(in srgb, var(--acc) 15%, transparent);
+  color: var(--text);
+}
+.dial img, .dial .letter { width: 26px; height: 26px; border-radius: 7px; }
+.dial .letter {
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 13px;
+  background: color-mix(in srgb, var(--acc) 18%, transparent);
+  color: var(--acc);
+}
+.dial span {
+  font-size: 11px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dial .pin-dot {
+  position: absolute; top: 7px; left: 9px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--acc);
+  box-shadow: 0 0 6px var(--acc);
+  opacity: 0.7;
+}
+.dial .rm {
+  position: absolute; top: 5px; right: 5px;
+  width: 19px; height: 19px;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 77, 109, 0.14);
+  color: #ff4d6d;
+  border: none; cursor: pointer;
+  opacity: 0; transition: opacity 0.15s;
+  font-size: 11px; line-height: 1;
+}
+.dial:hover .rm { opacity: 1; }
+.dial.add {
+  border-style: dashed; color: var(--text-3);
+  justify-content: center; gap: 6px;
+}
+.dial.add .plus { font-size: 22px; line-height: 1; font-weight: 300; }
+.dial.add:hover { color: var(--acc); }
+
+.addform {
+  display: none;
+  position: fixed; inset: 0; z-index: 10;
+  background: rgba(3, 3, 9, 0.6);
+  backdrop-filter: blur(14px);
+  align-items: center; justify-content: center;
+}
+.addform.open { display: flex; }
+.addform .box {
+  width: min(380px, 90vw);
+  border-radius: 18px;
+  background: rgba(10, 10, 21, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.75);
+  padding: 20px;
+  display: flex; flex-direction: column; gap: 11px;
+  animation: rise 0.2s var(--spring) both;
+}
+.addform h3 { font-size: 15px; font-weight: 600; margin-bottom: 3px; }
+.addform input {
+  height: 40px; padding: 0 13px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 11px;
+  outline: none; font-size: 13.5px; color: var(--text);
+  font-family: inherit;
+  user-select: text;
+}
+.addform input:focus { border-color: color-mix(in srgb, var(--acc) 45%, transparent); }
+.addform .row { display: flex; gap: 9px; justify-content: flex-end; margin-top: 4px; }
+.addform button {
+  height: 36px; padding: 0 17px;
+  border-radius: 11px; border: none; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 500;
+  background: rgba(255, 255, 255, 0.07); color: var(--text-2);
+}
+.addform button.go {
+  background: linear-gradient(120deg, var(--acc), var(--acc2));
+  color: #fff; font-weight: 600;
+  box-shadow: 0 2px 18px color-mix(in srgb, var(--acc) 35%, transparent);
+}
+
+.statline {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12px; color: var(--text-3);
+  padding: 8px 18px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  animation: rise 0.7s 0.24s var(--ease) both;
+}
+.statline svg { width: 13px; height: 13px; stroke: var(--acc); stroke-width: 2; fill: none; stroke-linejoin: round; }
+.statline b { color: var(--acc); font-weight: 600; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+</style>
+</head>
+<body>
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="w-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5 5l1.4 1.4M17.6 17.6L19 19M19 5l-1.4 1.4M6.4 17.6L5 19"/></symbol>
+  <symbol id="w-psun" viewBox="0 0 24 24"><circle cx="8" cy="7.5" r="2.8"/><path d="M8 2.5V4M2.5 7.5H4M4 3.5l1 1M12 3.5l-1 1M17.5 21H8.5a4 4 0 0 1-.6-7.95A5 5 0 0 1 17.5 12a4.5 4.5 0 0 1 0 9z"/></symbol>
+  <symbol id="w-cloud" viewBox="0 0 24 24"><path d="M17.5 19H7a4 4 0 0 1-.7-7.93A5.5 5.5 0 0 1 17 9.6 4.2 4.2 0 0 1 17.5 19z"/></symbol>
+  <symbol id="w-fog" viewBox="0 0 24 24"><path d="M17.5 13.5H7a4 4 0 0 1-.7-7.9A5.5 5.5 0 0 1 17 4.2a4.2 4.2 0 0 1 .5 9.3M5 17h14M7 20.5h10"/></symbol>
+  <symbol id="w-rain" viewBox="0 0 24 24"><path d="M17.5 15H7a4 4 0 0 1-.7-7.93A5.5 5.5 0 0 1 17 5.6 4.2 4.2 0 0 1 17.5 15zM8.5 18v2.5M12.5 18v2.5M16.5 18v2.5"/></symbol>
+  <symbol id="w-snow" viewBox="0 0 24 24"><path d="M17.5 15H7a4 4 0 0 1-.7-7.93A5.5 5.5 0 0 1 17 5.6 4.2 4.2 0 0 1 17.5 15zM8.5 18.5h.01M12.5 20.5h.01M16.5 18.5h.01M10.5 21.5h.01M14.5 18h.01"/></symbol>
+  <symbol id="w-storm" viewBox="0 0 24 24"><path d="M17.5 13.5H7a4 4 0 0 1-.7-7.9A5.5 5.5 0 0 1 17 4.2a4.2 4.2 0 0 1 .5 9.3M12.5 13l-2.5 4.5h3L10.5 22"/></symbol>
+</svg>
+<canvas id="stars"></canvas>
+<div id="scrim"></div>
+
+<div class="weather" id="weather" style="display:none">
+  <svg class="w-ic"><use id="w-use" href="#w-sun"/></svg>
+  <div class="w-text">
+    <div class="w-line1"><b id="w-temp"></b> <span class="w-label" id="w-label"></span></div>
+    <span class="city"><svg viewBox="0 0 24 24"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11z"/><circle cx="12" cy="10" r="2.4"/></svg><span id="w-city"></span></span>
+  </div>
+</div>
+
+<div class="wrap" id="wrap">
+  <div>
+    <div class="clock" id="clock">--:--</div>
+    <div class="date" id="date"></div>
+  </div>
+  <div class="greet" id="greet"></div>
+
+  <div class="search-wrap" id="search-wrap">
+    <form class="search" id="form">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="q" type="text" placeholder="Das Web durchsuchen …" autofocus autocomplete="off" />
+    </form>
+    <div class="sugg" id="sugg"></div>
+  </div>
+
+  <div class="dials" id="dials"></div>
+
+  <div class="statline" id="stat" style="display:none">
+    <svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 7.8-8 9-4.6-1.2-8-4.5-8-9V6z"/></svg>
+    <span><b id="blocked">0</b>&nbsp;Werbeanzeigen &amp; Tracker geblockt</span>
+  </div>
+</div>
+
+<div class="addform" id="addform">
+  <div class="box">
+    <h3>Verknüpfung hinzufügen</h3>
+    <input id="add-name" type="text" placeholder="Name" maxlength="30" />
+    <input id="add-url" type="text" placeholder="https://…" />
+    <div class="row">
+      <button id="add-cancel" type="button">Abbrechen</button>
+      <button class="go" id="add-save" type="button">Hinzufügen</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const ENGINES = {
+  google: 'https://www.google.com/search?q=',
+  ddg: 'https://duckduckgo.com/?q=',
+  bing: 'https://www.bing.com/search?q=',
+  brave: 'https://search.brave.com/search?q=',
+};
+const WMO = {
+  0: ['w-sun', 'Klar'], 1: ['w-psun', 'Heiter'], 2: ['w-psun', 'Bewölkt'], 3: ['w-cloud', 'Bedeckt'],
+  45: ['w-fog', 'Nebel'], 48: ['w-fog', 'Raureif'],
+  51: ['w-rain', 'Niesel'], 53: ['w-rain', 'Niesel'], 55: ['w-rain', 'Niesel'],
+  56: ['w-rain', 'Eisregen'], 57: ['w-rain', 'Eisregen'],
+  61: ['w-rain', 'Regen'], 63: ['w-rain', 'Regen'], 65: ['w-rain', 'Starkregen'],
+  66: ['w-rain', 'Eisregen'], 67: ['w-rain', 'Eisregen'],
+  71: ['w-snow', 'Schnee'], 73: ['w-snow', 'Schnee'], 75: ['w-snow', 'Starker Schnee'], 77: ['w-snow', 'Schneekörner'],
+  80: ['w-rain', 'Schauer'], 81: ['w-rain', 'Schauer'], 82: ['w-storm', 'Starke Schauer'],
+  85: ['w-snow', 'Schneeschauer'], 86: ['w-snow', 'Schneeschauer'],
+  95: ['w-storm', 'Gewitter'], 96: ['w-storm', 'Gewitter'], 99: ['w-storm', 'Hagelgewitter'],
+};
+
+// Uhr — feststehend, mit Sekunden (Sekundenfeld hat feste Breite)
+function tick() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const clock = document.getElementById('clock');
+  // Nur die Sekunden aktualisieren, falls Struktur schon existiert (kein Layout-Sprung)
+  let secEl = clock.querySelector('.sec');
+  if (!secEl) {
+    clock.textContent = `${hh}:${mm}`;
+    secEl = document.createElement('span');
+    secEl.className = 'sec';
+    clock.appendChild(secEl);
+  } else {
+    clock.firstChild.textContent = `${hh}:${mm}`;
+  }
+  secEl.textContent = ss;
+  document.getElementById('date').textContent =
+    now.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+tick();
+setInterval(tick, 1000);
+
+// ============================================================ WebGL 3D-Hintergrund
+// Volumetrische Nebel-/Galaxie-Szene mit HiDPI-Rendering (ultra scharf),
+// HDR-Tonemapping, Maus-Parallax und Akzentfarben. Fällt bei Bedarf auf ein
+// klassisches Starfield zurück.
+const canvas = document.getElementById('stars');
+let glOK = false;
+let setSceneAccent = () => {};
+let setSceneMouse = () => {};
+
+(function initGL() {
+  const gl = canvas.getContext('webgl', { antialias: true, alpha: false, premultipliedAlpha: false, powerPreference: 'high-performance' })
+          || canvas.getContext('experimental-webgl');
+  if (!gl) return;
+
+  const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
+  const FRAG = `
+  precision highp float;
+  uniform vec2 uRes;
+  uniform float uTime;
+  uniform vec2 uMouse;
+  uniform vec3 uAcc;
+  uniform vec3 uAcc2;
+  uniform float uWarp;
+
+  float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+  float noise(vec2 p){
+    vec2 i = floor(p), f = fract(p);
+    float a = hash(i), b = hash(i + vec2(1.0,0.0)), c = hash(i + vec2(0.0,1.0)), d = hash(i + vec2(1.0,1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+  }
+  float fbm(vec2 p){
+    float v = 0.0, a = 0.55;
+    mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+    for(int i = 0; i < 6; i++){ v += a * noise(p); p = m * p; a *= 0.5; }
+    return v;
+  }
+  // Sparse, scharf gerenderte Sterne mit Funkeln
+  float starLayer(vec2 uv, float density, float t){
+    vec2 g = floor(uv * density);
+    vec2 f = fract(uv * density) - 0.5;
+    float h = hash(g);
+    float present = step(0.972, h);
+    float d = length(f);
+    float tw = 0.6 + 0.4 * sin(t * 2.0 + h * 40.0);
+    float core = smoothstep(0.06, 0.0, d) * tw;
+    float halo = smoothstep(0.34, 0.0, d) * 0.25 * tw;
+    return present * (core + halo);
+  }
+  // ACES-ähnliches Tonemapping für den HDR-Look
+  vec3 aces(vec3 x){
+    return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0);
+  }
+  // Beleuchteter Planet (3D-Kugel-Look mit Terminator, Rim-Light & Oberflächen-Textur)
+  vec3 planet(vec2 uv, vec2 center, float rad, vec3 base, vec3 lightDir, inout float cov){
+    vec2 d = uv - center;
+    float dist = length(d);
+    if (dist > rad * 1.6) return vec3(0.0);
+    // z aus Kugelgleichung -> Normale
+    float z2 = rad*rad - dot(d, d);
+    vec3 col = vec3(0.0);
+    if (z2 > 0.0){
+      float z = sqrt(z2);
+      vec3 n = normalize(vec3(d, z));
+      float diff = clamp(dot(n, normalize(lightDir)), 0.0, 1.0);
+      // Oberflächendetails
+      float surf = fbm((d / rad) * 4.0 + center * 10.0);
+      vec3 c = base * (0.25 + surf * 0.5);
+      col = c * (0.12 + diff * 1.25);
+      // Rim-Light an der Kante
+      float rim = pow(1.0 - clamp(z / rad, 0.0, 1.0), 3.0);
+      col += mix(uAcc, uAcc2, 0.5) * rim * 0.6;
+      float edge = smoothstep(rad, rad - rad*0.04, dist);
+      cov = max(cov, edge);
+      col *= edge;
+    }
+    // weicher Atmosphären-Glow
+    float atmo = smoothstep(rad * 1.5, rad, dist) * 0.5;
+    col += mix(base, uAcc, 0.4) * atmo * (1.0 - cov);
+    return col;
+  }
+  void main(){
+    vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;
+    vec2 m = uMouse * 0.12;
+    float t = uTime * 0.05;
+
+    // Hyperspace-Warp: zieht die Koordinaten radial in Streifen
+    float warp = uWarp;
+    if (warp > 0.001){
+      float ang = atan(uv.y, uv.x);
+      float rad0 = length(uv);
+      rad0 = pow(rad0, 1.0 - warp * 0.6);
+      uv = vec2(cos(ang), sin(ang)) * rad0;
+    }
+
+    // Leichte Rotation + Parallax
+    float ca = cos(t * 0.3), sa = sin(t * 0.3);
+    vec2 ruv = mat2(ca, -sa, sa, ca) * (uv + m);
+
+    // Volumetrischer Nebel (zwei bewegte fbm-Schichten)
+    vec2 q = ruv * 1.6;
+    float n1 = fbm(q + vec2(t * 0.6, t * 0.2));
+    float n2 = fbm(q * 2.1 - vec2(t * 0.3, t * 0.5) + n1);
+    float neb = pow(smoothstep(0.15, 1.05, n1 * 0.7 + n2 * 0.6), 1.6);
+
+    // Farbverlauf zwischen den Akzenten, moduliert durch das Rauschen
+    vec3 col = mix(uAcc, uAcc2, clamp(n2 * 1.2, 0.0, 1.0));
+    col *= neb * 1.35;
+
+    // Zentrales Kern-Leuchten (galaktisches Zentrum)
+    float r = length(uv + m * 0.5);
+    float glow = exp(-r * 2.6) * 0.9;
+    col += mix(uAcc2, uAcc, 0.5) * glow;
+
+    // Dünne Akzent-Streifen (Aurora)
+    float band = fbm(vec2(ruv.x * 1.2 + t, ruv.y * 3.0)) ;
+    col += uAcc * smoothstep(0.55, 0.95, band) * neb * 0.5;
+
+    // Sterne (mehrere Dichten für Tiefe)
+    vec2 suv = uv + m * 1.4;
+    float starBoost = 1.0 + warp * 6.0;
+    float stars = starLayer(suv, 9.0, uTime)
+                + starLayer(suv * 1.7 + 31.4, 16.0, uTime) * 0.8
+                + starLayer(suv * 2.6 + 71.1, 26.0, uTime) * 0.6;
+    col += vec3(0.85, 0.92, 1.0) * stars * 1.4 * starBoost;
+
+    // ---- Planeten (langsam driftend) — bei Warp ausgeblendet
+    float planetFade = 1.0 - smoothstep(0.0, 0.4, warp);
+    if (planetFade > 0.01){
+      vec3 pcol = vec3(0.0);
+      float cov = 0.0;
+      vec2 par = m * 0.6;
+      // großer Planet links unten
+      vec2 c1 = vec2(-0.92 + sin(uTime*0.03)*0.03, -0.46 + cos(uTime*0.025)*0.03) + par;
+      pcol += planet(uv, c1, 0.30, mix(uAcc2, vec3(0.4,0.45,0.7), 0.5), vec3(0.7,0.5,0.6), cov);
+      // mittlerer Planet rechts oben
+      float cov2 = 0.0;
+      vec2 c2 = vec2(0.95 + cos(uTime*0.02)*0.02, 0.54 + sin(uTime*0.03)*0.02) + par*1.3;
+      vec3 ring = planet(uv, c2, 0.17, mix(uAcc, vec3(0.8,0.7,0.5), 0.4), vec3(-0.6,0.4,0.6), cov2);
+      // Saturn-artiger Ring
+      vec2 rd = (uv - c2);
+      float rr = length(vec2(rd.x, rd.y*2.6));
+      float ringMask = smoothstep(0.30, 0.28, rr) * smoothstep(0.21, 0.23, rr) * (1.0 - cov2);
+      ring += mix(uAcc, uAcc2, 0.5) * ringMask * 0.7;
+      pcol += ring;
+      // kleiner ferner Planet
+      float cov3 = 0.0;
+      vec2 c3 = vec2(0.45 + sin(uTime*0.04)*0.04, -0.62) + par*0.8;
+      pcol += planet(uv, c3, 0.075, vec3(0.5,0.55,0.75), vec3(0.5,0.6,0.5), cov3) * 0.9;
+      col = mix(col, col + pcol, planetFade);
+      col = mix(col, pcol, max(cov, max(cov2, cov3)) * 0.92 * planetFade);
+    }
+
+    // Tiefes Basis-Schwarz + Vignette
+    vec3 base = vec3(0.02, 0.02, 0.05);
+    col += base;
+    float vig = smoothstep(1.25, 0.25, length(uv));
+    col *= mix(0.55, 1.0, vig);
+
+    // Warp-Aufhellung Richtung Zentrum
+    col += mix(uAcc, vec3(1.0), 0.4) * warp * exp(-r * 1.5) * 1.6;
+
+    // Filmkorn gegen Banding
+    float grain = (hash(gl_FragCoord.xy + uTime) - 0.5) * 0.025;
+    col += grain;
+
+    col = aces(col * (1.15 + warp * 0.6));
+    gl_FragColor = vec4(col, 1.0);
+  }`;
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) { console.error(gl.getShaderInfoLog(sh)); return null; }
+    return sh;
+  }
+  const vs = compile(gl.VERTEX_SHADER, VERT);
+  const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+  if (!vs || !fs) return;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(prog)); return; }
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  const uRes = gl.getUniformLocation(prog, 'uRes');
+  const uTime = gl.getUniformLocation(prog, 'uTime');
+  const uMouse = gl.getUniformLocation(prog, 'uMouse');
+  const uAcc = gl.getUniformLocation(prog, 'uAcc');
+  const uAcc2 = gl.getUniformLocation(prog, 'uAcc2');
+  const uWarp = gl.getUniformLocation(prog, 'uWarp');
+
+  let acc = [0, 0.9, 1], acc2 = [0.49, 0.3, 1];
+  let mx = 0, my = 0, tmx = 0, tmy = 0;
+  setSceneAccent = (a, b) => { acc = a; acc2 = b; };
+  setSceneMouse = (x, y) => { tmx = x; tmy = y; };
+
+  function resizeGL(){
+    // Bis zu 2.5x Pixeldichte für ultra scharfe Auflösung
+    const dpr = Math.min(devicePixelRatio || 1, 2.5);
+    const w = Math.floor((innerWidth + 80) * dpr);
+    const h = Math.floor((innerHeight + 80) * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w; canvas.height = h;
+      gl.viewport(0, 0, w, h);
+    }
+  }
+  resizeGL();
+  addEventListener('resize', resizeGL);
+
+  const start = performance.now();
+  (function render(){
+    resizeGL();
+    mx += (tmx - mx) * 0.05; my += (tmy - my) * 0.05;
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, (performance.now() - start) / 1000);
+    gl.uniform2f(uMouse, mx, my);
+    gl.uniform3fv(uAcc, acc);
+    gl.uniform3fv(uAcc2, acc2);
+    gl.uniform1f(uWarp, 0.0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    requestAnimationFrame(render);
+  })();
+  glOK = true;
+})();
+
+// CSS-Hexfarbe -> linearer RGB-Vektor (für korrekte HDR-Mischung)
+function hexToLinear(hex){
+  hex = (hex || '').trim().replace('#', '');
+  if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+  const r = parseInt(hex.slice(0,2),16)/255, g = parseInt(hex.slice(2,4),16)/255, b = parseInt(hex.slice(4,6),16)/255;
+  const lin = (c) => (isNaN(c) ? 0 : Math.pow(c, 2.2));
+  return [lin(r), lin(g), lin(b)];
+}
+function syncSceneAccent(){
+  const cs = getComputedStyle(document.documentElement);
+  const a = cs.getPropertyValue('--acc') || '#00e5ff';
+  const b = cs.getPropertyValue('--acc2') || '#7c4dff';
+  setSceneAccent(hexToLinear(a), hexToLinear(b));
+}
+syncSceneAccent();
+
+// Fallback: klassisches 2D-Starfield, falls WebGL nicht verfügbar ist
+if (!glOK) {
+  const ctx = canvas.getContext('2d');
+  let stars = [];
+  function resize2d() {
+    canvas.width = (innerWidth + 80) * devicePixelRatio;
+    canvas.height = (innerHeight + 80) * devicePixelRatio;
+    stars = Array.from({ length: Math.min(170, innerWidth / 9) }, () => ({
+      x: Math.random() * canvas.width, y: Math.random() * canvas.height,
+      r: (Math.random() * 1.1 + 0.3) * devicePixelRatio,
+      s: Math.random() * 0.22 + 0.04, p: Math.random() * Math.PI * 2,
+    }));
+  }
+  resize2d();
+  addEventListener('resize', resize2d);
+  (function loop(t) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const st of stars) {
+      st.y -= st.s; if (st.y < -4) st.y = canvas.height + 4;
+      const tw = 0.45 + 0.55 * Math.abs(Math.sin(t / 1400 + st.p));
+      ctx.globalAlpha = tw * 0.7; ctx.fillStyle = '#cfe9ff';
+      ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(loop);
+  })(0);
+}
+
+let px = 0, py = 0;
+addEventListener('mousemove', (e) => {
+  const nx = (e.clientX / innerWidth - 0.5);
+  const ny = (e.clientY / innerHeight - 0.5);
+  px += (nx - px) * 0.08; py += (ny - py) * 0.08;
+  setSceneMouse(nx, -ny);
+  if (!glOK) canvas.style.transform = `translate(${px * -16}px, ${py * -16}px)`;
+  // Inhalt (Uhr, Suche) bleibt fest stehen — nur der Hintergrund bewegt sich.
+});
+
+// Daten laden
+let DATA = null;
+let dials = [];
+
+function host(url) { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } }
+
+function renderDials() {
+  const box = document.getElementById('dials');
+  box.innerHTML = '';
+  for (const site of dials) {
+    const a = document.createElement('a');
+    a.className = 'dial';
+    a.href = site.url;
+    const h = host(site.url);
+    const img = document.createElement('img');
+    img.src = `https://www.google.com/s2/favicons?domain=${h}&sz=64`;
+    img.onerror = () => {
+      const d = document.createElement('div');
+      d.className = 'letter';
+      d.textContent = (h[0] || '•').toUpperCase();
+      img.replaceWith(d);
+    };
+    const label = document.createElement('span');
+    label.textContent = (site.name && site.name !== site.url ? site.name : h).slice(0, 30);
+    a.append(img, label);
+    if (site.pinned) {
+      const dot = document.createElement('i');
+      dot.className = 'pin-dot';
+      dot.title = 'Angepinnt';
+      a.appendChild(dot);
+    }
+    const rm = document.createElement('button');
+    rm.className = 'rm';
+    rm.textContent = '✕';
+    rm.title = site.pinned ? 'Verknüpfung entfernen' : 'Ausblenden';
+    rm.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await window.novaPage?.removeDial({ url: site.url, pinned: !!site.pinned });
+      dials = dials.filter((d) => d.url !== site.url);
+      renderDials();
+    });
+    a.appendChild(rm);
+    box.appendChild(a);
+  }
+  const add = document.createElement('div');
+  add.className = 'dial add';
+  add.innerHTML = '<span class="plus">+</span><span>Hinzufügen</span>';
+  add.addEventListener('click', () => {
+    document.getElementById('addform').classList.add('open');
+    document.getElementById('add-name').focus();
+  });
+  box.appendChild(add);
+}
+
+document.getElementById('add-cancel').addEventListener('click', () => {
+  document.getElementById('addform').classList.remove('open');
+});
+document.getElementById('addform').addEventListener('mousedown', (e) => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('open');
+});
+document.getElementById('add-save').addEventListener('click', async () => {
+  const name = document.getElementById('add-name').value.trim();
+  let url = document.getElementById('add-url').value.trim();
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+  await window.novaPage?.addDial({ name, url });
+  dials.unshift({ name: name || host(url), url, pinned: true });
+  renderDials();
+  document.getElementById('addform').classList.remove('open');
+  document.getElementById('add-name').value = '';
+  document.getElementById('add-url').value = '';
+});
+document.getElementById('add-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('add-save').click(); }
+});
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.getElementById('addform').classList.remove('open');
+});
+
+// Suche + Vorschläge
+const form = document.getElementById('form');
+const q = document.getElementById('q');
+const suggBox = document.getElementById('sugg');
+let suggItems = [];
+let suggSel = -1;
+let suggSeq = 0;
+
+function go(text) {
+  const t = text.trim();
+  if (!t) return;
+  const engine = ENGINES[DATA?.searchEngine] || ENGINES.google;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) location.href = t;
+  else if (!/\s/.test(t) && /\.[a-z]{2,}/i.test(t)) location.href = 'https://' + t;
+  else location.href = engine + encodeURIComponent(t);
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (suggSel >= 0 && suggItems[suggSel]) go(suggItems[suggSel]);
+  else go(q.value);
+});
+
+q.addEventListener('input', async () => {
+  const text = q.value.trim();
+  const seq = ++suggSeq;
+  if (text.length < 2 || !window.novaPage) { closeSugg(); return; }
+  const res = await window.novaPage.suggest(text);
+  if (seq !== suggSeq) return;
+  suggItems = res || [];
+  suggSel = -1;
+  if (suggItems.length === 0) { closeSugg(); return; }
+  suggBox.innerHTML = '';
+  suggItems.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'sugg-row';
+    row.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>';
+    const span = document.createElement('span');
+    span.textContent = s;
+    row.appendChild(span);
+    row.addEventListener('mousedown', (e) => { e.preventDefault(); go(s); });
+    row.addEventListener('mouseenter', () => { suggSel = i; paintSugg(); });
+    suggBox.appendChild(row);
+  });
+  suggBox.classList.add('open');
+  document.getElementById('search-wrap').classList.add('open');
+  document.body.classList.add('searching');
+});
+q.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!suggItems.length) return;
+    e.preventDefault();
+    suggSel = (suggSel + (e.key === 'ArrowDown' ? 1 : -1) + suggItems.length + 1) % (suggItems.length + 1) - 1;
+    if (suggSel === -1) suggSel = e.key === 'ArrowDown' ? 0 : suggItems.length - 1;
+    paintSugg();
+  } else if (e.key === 'Escape') {
+    closeSugg();
+  }
+});
+q.addEventListener('blur', () => setTimeout(closeSugg, 140));
+function paintSugg() {
+  [...suggBox.children].forEach((c, i) => c.classList.toggle('sel', i === suggSel));
+}
+function closeSugg() {
+  suggBox.classList.remove('open');
+  document.getElementById('search-wrap').classList.remove('open');
+  document.body.classList.remove('searching');
+  suggItems = [];
+  suggSel = -1;
+}
+
+(async () => {
+  try { DATA = await window.novaPage?.getData(); } catch {}
+  if (!DATA) return;
+
+  if (DATA.accent === 'custom' && DATA.customAccent) {
+    document.documentElement.style.setProperty('--acc', DATA.customAccent.a || '#00e5ff');
+    document.documentElement.style.setProperty('--acc2', DATA.customAccent.b || '#7c4dff');
+  } else {
+    const ACCENTS = {
+      cyan: ['#00e5ff', '#7c4dff'], violet: ['#a78bfa', '#ec4899'], magenta: ['#f471b5', '#7c3aed'],
+      lime: ['#a3e635', '#22d3ee'], amber: ['#fbbf24', '#fb7185'], ice: ['#7dd3fc', '#818cf8'],
+    };
+    const [a1, a2] = ACCENTS[DATA.accent] || ACCENTS.cyan;
+    document.documentElement.style.setProperty('--acc', a1);
+    document.documentElement.style.setProperty('--acc2', a2);
+  }
+  syncSceneAccent();
+
+  const h = new Date().getHours();
+  const greeting = h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : 'Guten Abend';
+  document.getElementById('greet').innerHTML = `${greeting}, <b></b>.`;
+  document.getElementById('greet').querySelector('b').textContent = DATA.name || '';
+
+  if (DATA.weather) {
+    const [iconId, label] = WMO[DATA.weather.code] || ['w-cloud', ''];
+    document.getElementById('w-use').setAttribute('href', '#' + iconId);
+    document.getElementById('w-temp').textContent = `${DATA.weather.temp}°C`;
+    document.getElementById('w-label').textContent = label;
+    document.getElementById('w-city').textContent = DATA.weather.city || '';
+    document.getElementById('weather').style.display = '';
+  }
+
+  if (DATA.totalBlocked > 0) {
+    document.getElementById('stat').style.display = '';
+    document.getElementById('blocked').textContent = DATA.totalBlocked.toLocaleString('de-DE');
+  }
+
+  dials = DATA.dials || [];
+  renderDials();
+
+  // Speed-Dials live aktualisieren, wenn sie in einem anderen Tab geändert werden
+  window.novaPage?.onDials?.((next) => { dials = next || []; renderDials(); });
+})();
+</script>
+</body>
+</html>

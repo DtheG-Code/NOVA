@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<title>Nova Browser</title>
+<link rel="stylesheet" href="fonts.css" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body data-accent="cyan">
+
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.8 6.3.8-4.6 4.4 1.2 6.2-5.6-3.1-5.6 3.1 1.2-6.2L3 9.6l6.3-.8z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 7.8-8 9-4.6-1.2-8-4.5-8-9V6z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 4 5.5 4 9s-1.5 6.5-4 9c-2.5-2.5-4-5.5-4-9s1.5-6.5 4-9z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3L2 21h20zM12 10v5M12 17.6v.4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol id="i-audio" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM15.5 8.5a5 5 0 0 1 0 7"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4zM22 9l-6 6M16 9l6 6"/></symbol>
+  <symbol id="i-min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-maxi" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1.5"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4H18a2 2 0 0 1 2 2v8.5a1.5 1.5 0 0 1-1.5 1.5H16"/><rect x="4" y="8" width="12" height="12" rx="1.5"/></symbol>
+  <symbol id="i-side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M9.5 4v16"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 4h4M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M19 14v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2h8l5 5v15H6zM14 2v5h5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3h6l-1 7 3.5 3v2h-11v-2L10 10zM12 15v6"/></symbol>
+  <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M12 4v16"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M3 8a2 2 0 0 1 2-2h2l2-2.5h6L17 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-keys" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/></symbol>
+  <linearGradient id="novagrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+    <stop offset="0" style="stop-color:var(--acc)"/>
+    <stop offset="1" style="stop-color:var(--acc2)"/>
+  </linearGradient>
+  <symbol id="i-nova" viewBox="0 0 24 24">
+    <ellipse cx="12" cy="12" rx="10.4" ry="4.1" transform="rotate(-28 12 12)" fill="none" stroke="url(#novagrad)" stroke-width="1.2" opacity="0.7"/>
+    <path d="M7.3 17.4V6.6l9.4 10.8V6.6" fill="none" stroke="url(#novagrad)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="20.8" cy="6.9" r="1.7" fill="url(#novagrad)"/>
+  </symbol>
+  <symbol id="i-sp-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5.5 9.5V20h13V9.5"/></symbol>
+  <symbol id="i-sp-work" viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></symbol>
+  <symbol id="i-sp-game" viewBox="0 0 24 24"><path d="M7 7h10a5 5 0 0 1 5 5v1.5a3.5 3.5 0 0 1-6.5 1.8L14.8 14H9.2l-.7 1.3A3.5 3.5 0 0 1 2 13.5V12a5 5 0 0 1 5-5z"/><path d="M6.5 11.5h3.4M8.2 9.8v3.4M15.5 10h.01M17.8 12h.01"/></symbol>
+  <symbol id="i-sp-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+  <symbol id="i-sp-code" viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></symbol>
+  <symbol id="i-sp-heart" viewBox="0 0 24 24"><path d="M12 21S4 14.2 4 8.8A4.6 4.6 0 0 1 12 5.9a4.6 4.6 0 0 1 8 2.9C20 14.2 12 21 12 21z"/></symbol>
+  <symbol id="i-sp-flask" viewBox="0 0 24 24"><path d="M10 2v6.5L4.2 18.8A2 2 0 0 0 6 22h12a2 2 0 0 0 1.8-3.2L14 8.5V2M8.5 2h7M7 15h10"/></symbol>
+  <symbol id="i-sp-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5z"/></symbol>
+  <symbol id="i-sp-film" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="2"/><path d="M7 4v16M17 4v16M2.5 9.5H7M2.5 14.5H7M17 9.5h4.5M17 14.5h4.5"/></symbol>
+  <symbol id="i-sp-cart" viewBox="0 0 24 24"><circle cx="9.5" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/><path d="M3 3h2.5L8 15.5a1 1 0 0 0 1 .5h8.5a1 1 0 0 0 1-.8L20.5 8H6"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+  <symbol id="i-skip-next" viewBox="0 0 24 24"><path d="M6 5l11 7-11 7zM19 5v14"/></symbol>
+  <symbol id="i-skip-prev" viewBox="0 0 24 24"><path d="M18 5L7 12l11 7zM5 5v14"/></symbol>
+  <symbol id="i-spotify" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none"/><path d="M7 9.5c3.2-1 7.2-.7 10 1M7.5 13c2.7-.8 5.8-.5 8 .9M8 16.2c2.1-.6 4.4-.4 6 .6"/></symbol>
+  <symbol id="i-apple" viewBox="0 0 24 24"><path d="M16 13c0 3 2.2 4 2.3 4-.02.06-.36 1.2-1.2 2.4-.72 1-1.46 2-2.62 2-1.13.02-1.5-.67-2.8-.67-1.3 0-1.7.65-2.78.69-1.12.04-1.97-1.08-2.7-2.08-1.48-2.04-2.6-5.77-1.08-8.3.75-1.25 2.1-2.04 3.56-2.06 1.1-.02 2.13.73 2.8.73.67 0 1.92-.9 3.24-.77.55.02 2.1.22 3.1 1.67-.08.05-1.84 1.07-1.82 3.19M13.9 5.6C14.5 4.9 14.9 3.9 14.8 3c-.85.04-1.9.57-2.5 1.27-.55.62-1.03 1.62-.9 2.57.95.07 1.92-.48 2.5-1.18"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-7 5 16 2.5-9H21"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="15" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 18a9 9 0 1 1 15 0"/><path d="M12 14l4-4"/><circle cx="12" cy="14" r="1.4"/></symbol>
+  <symbol id="i-up-down" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a3 3 0 0 0 4 4M9.4 5.2A9.7 9.7 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 3.9M6.1 6.1A17 17 0 0 0 2 12s4 7 10 7a9.7 9.7 0 0 0 3-.5"/></symbol>
+  <symbol id="i-trash-sm" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></symbol>
+</svg>
+
+<div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+<div class="noise"></div>
+
+<div id="app">
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside id="sidebar">
+    <div class="sb-head drag">
+      <div class="logo no-drag" title="NOVA">
+        <svg class="nova-mark"><use href="#i-nova"/></svg>
+        <span class="logo-text">NOVA</span>
+      </div>
+      <span id="space-name" class="space-name no-drag"></span>
+    </div>
+
+    <div id="spaces-row" class="no-drag"></div>
+
+    <div id="sb-filter" class="no-drag">
+      <svg class="ic dim"><use href="#i-search"/></svg>
+      <input id="filter-input" type="text" placeholder="Tabs &amp; Favoriten filtern …" spellcheck="false" />
+      <button class="icon-btn slim hidden" id="filter-clear" title="Filter löschen"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+
+    <button id="btn-newtab" class="no-drag">
+      <svg class="ic"><use href="#i-plus"/></svg>
+      <span>Neuer Tab</span>
+      <kbd>Strg T</kbd>
+    </button>
+
+    <div id="pinned-grid"></div>
+
+    <div class="sb-section-head tabs-head">
+      <span>Tabs</span>
+      <span id="tab-count" class="pill-mini"></span>
+      <button class="icon-btn slim" id="btn-close-all-tabs" title="Alle Tabs in diesem Space schließen"><svg class="ic"><use href="#i-trash"/></svg></button>
+    </div>
+    <div id="tab-list"></div>
+    <button id="tab-overflow" class="hidden"><svg class="ic"><use href="#i-down"/></svg><span></span></button>
+
+    <div class="sb-section" id="bm-section">
+      <div class="sb-section-head clickable" id="bm-head" title="Ein-/ausklappen">
+        <svg class="ic sec-chev"><use href="#i-chev"/></svg>
+        <span>Favoriten</span>
+        <span id="bm-count" class="pill-mini"></span>
+      </div>
+      <div id="bookmark-tree"></div>
+    </div>
+
+    <div class="sb-foot">
+      <div id="mini-shield" title="Geblockte Werbung &amp; Tracker (gesamt)">
+        <svg class="ic"><use href="#i-shield"/></svg>
+        <span id="mini-shield-count">0</span>
+      </div>
+      <div class="sb-foot-btns">
+        <button class="icon-btn" id="btn-cheats" title="Tastenkürzel (F1)"><svg class="ic"><use href="#i-keys"/></svg></button>
+        <button class="icon-btn" id="btn-history" title="Verlauf (Strg H)"><svg class="ic"><use href="#i-clock"/></svg></button>
+        <button class="icon-btn" id="btn-downloads" title="Downloads (Strg J)"><svg class="ic"><use href="#i-download"/></svg><span id="dl-badge" class="badge zero">0</span></button>
+        <button class="icon-btn settings-btn" id="btn-settings" title="Einstellungen"><svg class="ic"><use href="#i-gear"/></svg></button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===================== CONTENT ===================== -->
+  <main id="content">
+    <!-- Horizontale Tab-Leiste (Modus „Tabs oben") mit animiertem Nebula -->
+    <div id="tabstrip" class="drag">
+      <div class="nebula"><i></i><i></i><i></i><i></i></div>
+      <div id="tabstrip-tabs"></div>
+      <button id="tabstrip-new" class="no-drag" title="Neuer Tab (Strg T)"><svg class="ic"><use href="#i-plus"/></svg></button>
+    </div>
+
+    <header id="topbar" class="drag">
+      <button class="icon-btn no-drag" id="btn-sidebar" title="Seitenleiste (Strg B)"><svg class="ic"><use href="#i-side"/></svg></button>
+      <div class="nav-btns no-drag">
+        <button class="icon-btn" id="btn-back" title="Zurück" disabled><svg class="ic"><use href="#i-back"/></svg></button>
+        <button class="icon-btn" id="btn-fwd" title="Vorwärts" disabled><svg class="ic"><use href="#i-fwd"/></svg></button>
+        <button class="icon-btn" id="btn-reload" title="Neu laden"><svg class="ic"><use href="#i-reload"/></svg></button>
+      </div>
+
+      <div id="omnibox" class="no-drag">
+        <span id="omni-sec" class="sec-chip" title="Verbindung">
+          <svg class="ic"><use href="#i-search"/></svg>
+        </span>
+        <input id="omni-input" type="text" spellcheck="false" autocomplete="off"
+               placeholder="Suchen oder Adresse …" />
+        <button class="icon-btn slim" id="btn-copyurl" title="Link kopieren">
+          <svg class="ic"><use href="#i-copy"/></svg>
+        </button>
+        <button class="icon-btn slim" id="btn-star" title="Zu Favoriten hinzufügen (Strg D)">
+          <svg class="ic"><use href="#i-star"/></svg>
+        </button>
+      </div>
+
+      <!-- Mini-Player in der Topbar (sichtbar, wenn Musik spielt) -->
+      <div id="mini-music" class="no-drag hidden" title="Zum NOVA-Sound-Player">
+        <div class="mm-art"><img id="mm-art-img" alt="" /><svg class="ic"><use href="#i-music"/></svg></div>
+        <div class="mm-meta">
+          <span class="mm-title" id="mm-title">—</span>
+          <span class="mm-artist" id="mm-artist"></span>
+        </div>
+        <div class="mm-controls">
+          <button class="icon-btn slim" id="mm-prev" title="Zurück"><svg class="ic"><use href="#i-skip-prev"/></svg></button>
+          <button class="icon-btn slim" id="mm-playpause" title="Play/Pause"><svg class="ic"><use href="#i-play"/></svg></button>
+          <button class="icon-btn slim" id="mm-next" title="Weiter"><svg class="ic"><use href="#i-skip-next"/></svg></button>
+        </div>
+        <div class="mm-bar"><i id="mm-progress"></i></div>
+      </div>
+
+      <div class="right-btns no-drag" id="right-btns">
+        <button class="icon-btn topbar-tool" data-tool="music" id="btn-music" title="Musik (Spotify &amp; Apple Music)"><svg class="ic"><use href="#i-music"/></svg></button>
+        <button class="icon-btn topbar-tool" data-tool="downloads" id="btn-downloads-top" title="Downloads">
+          <svg class="ic"><use href="#i-download"/></svg>
+          <span id="dl-badge-top" class="badge zero">0</span>
+        </button>
+        <button class="icon-btn topbar-tool" data-tool="netmon" id="btn-netmon" title="Netzwerk-Monitor"><svg class="ic"><use href="#i-activity"/></svg></button>
+        <button class="icon-btn topbar-tool" data-tool="screenshot" id="btn-screenshot" title="Screenshot (Strg+Shift+S)"><svg class="ic"><use href="#i-camera"/></svg></button>
+        <button class="icon-btn topbar-tool" data-tool="split" id="btn-split" title="Split View (Strg+Shift+D)"><svg class="ic"><use href="#i-split"/></svg></button>
+        <button class="icon-btn topbar-tool" data-tool="shield" id="btn-shield" title="NOVA Shield">
+          <svg class="ic"><use href="#i-shield"/></svg>
+          <span id="shield-badge" class="badge">0</span>
+        </button>
+        <button class="icon-btn topbar-tool" data-tool="palette" id="btn-palette" title="Befehlspalette (Strg K)"><svg class="ic"><use href="#i-bolt"/></svg></button>
+        <button class="icon-btn" id="btn-edit-topbar" title="Topbar anpassen"><svg class="ic"><use href="#i-sliders"/></svg></button>
+      </div>
+
+      <div class="win-btns no-drag">
+        <button id="win-min" title="Minimieren"><svg class="ic"><use href="#i-min"/></svg></button>
+        <button id="win-max" title="Maximieren"><svg class="ic" id="win-max-ic"><use href="#i-maxi"/></svg></button>
+        <button id="win-close" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+
+    <div id="loadbar"><i></i></div>
+
+    <div id="view-area">
+      <div id="webviews">
+        <div id="split-divider" class="hidden"><i></i></div>
+        <canvas id="warp-overlay" class="hidden"></canvas>
+      </div>
+
+      <div id="findbar" class="hidden">
+        <svg class="ic dim"><use href="#i-search"/></svg>
+        <input id="find-input" type="text" placeholder="Auf Seite suchen …" />
+        <span id="find-count"></span>
+        <button class="icon-btn slim" id="find-prev"><svg class="ic"><use href="#i-up"/></svg></button>
+        <button class="icon-btn slim" id="find-next"><svg class="ic"><use href="#i-down"/></svg></button>
+        <button class="icon-btn slim" id="find-close"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+
+      <div id="link-preview" class="hidden"></div>
+
+    </div>
+  </main>
+</div>
+
+<div id="drag-shield" class="hidden"></div>
+
+<!-- ===================== TAB PREVIEW ===================== -->
+<div id="tab-preview" class="hidden">
+  <div class="tp-img"><img alt="" /></div>
+  <div class="tp-meta">
+    <span class="tp-title"></span>
+    <span class="tp-url"></span>
+  </div>
+</div>
+
+<!-- ===================== OMNIBOX DROPDOWN ===================== -->
+<div id="omni-drop" class="hidden"></div>
+
+<!-- ===================== SHIELD POPOVER ===================== -->
+<div id="shield-pop" class="hidden">
+  <div class="sp-head">
+    <svg class="ic acc"><use href="#i-shield"/></svg>
+    <span>NOVA Shield</span>
+  </div>
+  <div class="sp-counts">
+    <div class="sp-count"><b id="sp-tab-count">0</b><span>auf dieser Seite</span></div>
+    <div class="sp-count"><b id="sp-total-count">0</b><span>insgesamt geblockt</span></div>
+  </div>
+  <div id="sp-trackers"></div>
+  <label class="switch-row">
+    <span>Adblock &amp; Tracking-Schutz</span>
+    <span class="switch"><input type="checkbox" id="sp-global"><i></i></span>
+  </label>
+  <label class="switch-row" id="sp-site-row">
+    <span>Auf <b id="sp-host">dieser Seite</b> erlauben</span>
+    <span class="switch"><input type="checkbox" id="sp-site"><i></i></span>
+  </label>
+</div>
+
+<!-- ===================== DOWNLOAD-DROPDOWN ===================== -->
+<div id="dl-pop" class="topbar-pop hidden">
+  <div class="pop-head">
+    <svg class="ic acc"><use href="#i-download"/></svg>
+    <span>Downloads</span>
+    <div class="pop-head-actions">
+      <button class="icon-btn slim" id="dl-open-folder" title="Download-Ordner öffnen"><svg class="ic"><use href="#i-folder"/></svg></button>
+      <button class="icon-btn slim" id="dl-clear" title="Liste aufräumen"><svg class="ic"><use href="#i-trash-sm"/></svg></button>
+    </div>
+  </div>
+  <div class="dl-globallimit">
+    <svg class="ic"><use href="#i-gauge"/></svg>
+    <span>Gesamt-Limit</span>
+    <div id="dl-global-limit"></div>
+  </div>
+  <div id="dl-pop-list" class="pop-scroll"></div>
+</div>
+
+<!-- ===================== NETZWERK-MONITOR ===================== -->
+<div id="net-pop" class="topbar-pop hidden">
+  <div class="pop-head">
+    <svg class="ic acc"><use href="#i-activity"/></svg>
+    <span>Netzwerk-Monitor</span>
+    <div class="pop-head-actions">
+      <span class="net-total" id="net-total-rate">0 KB/s</span>
+    </div>
+  </div>
+  <div class="net-summary">
+    <div class="net-stat"><b id="net-down-rate">0</b><span>↓ Gesamt</span></div>
+    <div class="net-stat"><b id="net-up-rate">0</b><span>Aktive Tabs</span></div>
+    <div class="net-stat"><b id="net-req-rate">0</b><span>Anfragen/s</span></div>
+  </div>
+  <div id="net-pop-list" class="pop-scroll"></div>
+</div>
+
+<!-- ===================== TOPBAR ANPASSEN ===================== -->
+<div id="topbar-edit" class="topbar-pop hidden">
+  <div class="pop-head">
+    <svg class="ic acc"><use href="#i-sliders"/></svg>
+    <span>Topbar anpassen</span>
+  </div>
+  <div class="te-hint">Lege fest, welche Werkzeuge in der Topbar erscheinen.</div>
+  <div id="te-list" class="te-list"></div>
+</div>
+
+<!-- ===================== MUSIC PLAYER ===================== -->
+<div id="music-panel" class="hidden">
+  <div class="music-head drag">
+    <div class="music-title no-drag">
+      <svg class="ic acc"><use href="#i-music"/></svg>
+      <span>NOVA Sound</span>
+    </div>
+    <div class="music-services no-drag">
+      <button class="music-svc active" data-svc="spotify" title="Spotify">
+        <svg class="ic"><use href="#i-spotify"/></svg><span>Spotify</span>
+      </button>
+      <button class="music-svc" data-svc="apple" title="Apple Music">
+        <svg class="ic"><use href="#i-apple"/></svg><span>Apple Music</span>
+      </button>
+    </div>
+    <div class="music-head-btns no-drag">
+      <button class="icon-btn slim" id="music-reload" title="Neu laden"><svg class="ic"><use href="#i-reload"/></svg></button>
+      <button class="icon-btn slim" id="music-popout" title="In neuem Tab öffnen"><svg class="ic"><use href="#i-expand"/></svg></button>
+      <button class="icon-btn slim" id="music-close" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+  </div>
+  <div class="music-body" id="music-body"></div>
+  <div class="music-foot no-drag">
+    <button class="icon-btn slim" id="music-vol-btn" title="Stummschalten (nur Musik)"><svg class="ic"><use href="#i-audio"/></svg></button>
+    <input type="range" id="music-vol" class="music-vol" min="0" max="100" step="1" value="100" title="Musik-Lautstärke" />
+    <span id="music-vol-val" class="music-vol-val">100%</span>
+  </div>
+  <div class="music-resize" id="music-resize" title="Größe ändern"></div>
+</div>
+
+<!-- ===================== SPACE EDITOR ===================== -->
+<div id="space-edit" class="hidden">
+  <div class="se-row">
+    <input id="se-name" type="text" maxlength="20" placeholder="Name des Space" />
+  </div>
+  <div class="se-icons" id="se-icons"></div>
+  <div class="se-accents" id="se-accents"></div>
+  <div class="se-actions">
+    <button class="btn danger-ghost hidden" id="se-delete"><svg class="ic"><use href="#i-trash"/></svg> Löschen</button>
+    <button class="btn primary" id="se-save"><svg class="ic"><use href="#i-check"/></svg> Speichern</button>
+  </div>
+</div>
+
+<!-- ===================== FAVORIT SPEICHERN ===================== -->
+<div id="bm-save" class="topbar-pop hidden">
+  <div class="pop-head">
+    <svg class="ic acc"><use href="#i-star"/></svg>
+    <span id="bm-save-title">Favorit hinzufügen</span>
+  </div>
+  <div class="bm-save-body">
+    <input id="bm-save-name" class="set-input" type="text" placeholder="Name" spellcheck="false" />
+    <div class="bm-save-folders-head">
+      <span>Ordner wählen</span>
+      <button class="bms-newbtn" id="bm-new-folder"><svg class="ic"><use href="#i-plus"/></svg>Neuer Ordner</button>
+    </div>
+    <div id="bm-newfolder-row" class="bm-newfolder-row hidden">
+      <input id="bm-newfolder-name" class="set-input" type="text" placeholder="Ordnername …" spellcheck="false" />
+      <button class="btn primary" id="bm-newfolder-create"><svg class="ic"><use href="#i-check"/></svg></button>
+    </div>
+    <div id="bm-save-folders" class="bm-save-folders"></div>
+  </div>
+  <div class="bm-save-actions">
+    <button class="btn danger-ghost hidden" id="bm-save-remove"><svg class="ic"><use href="#i-trash"/></svg><span>Entfernen</span></button>
+    <button class="btn primary" id="bm-save-confirm"><svg class="ic"><use href="#i-check"/></svg><span>Speichern</span></button>
+  </div>
+</div>
+
+<!-- ===================== COMMAND PALETTE ===================== -->
+<div id="palette" class="overlay hidden">
+  <div class="palette-box">
+    <div class="palette-input-row">
+      <svg class="ic acc"><use href="#i-bolt"/></svg>
+      <input id="palette-input" type="text" placeholder="Befehl, Tab, Favorit oder Verlauf …" />
+      <kbd>ESC</kbd>
+    </div>
+    <div id="palette-results"></div>
+    <div class="palette-foot">
+      <span><kbd>↑↓</kbd> Navigieren</span>
+      <span><kbd>↵</kbd> Öffnen</span>
+      <span><kbd>ESC</kbd> Schließen</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CHEATSHEET ===================== -->
+<div id="cheats" class="overlay hidden">
+  <div class="cheats-box">
+    <div class="cheats-head">
+      <svg class="nova-mark small"><use href="#i-nova"/></svg>
+      <h2>Tastenkürzel</h2>
+      <button class="icon-btn" id="cheats-close"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="cheats-grid" id="cheats-grid"></div>
+  </div>
+</div>
+
+<!-- ===================== HUB ===================== -->
+<div id="hub" class="overlay hidden">
+  <div class="hub-box">
+    <nav class="hub-nav">
+      <div class="hub-logo"><svg class="nova-mark small"><use href="#i-nova"/></svg></div>
+      <button data-panel="history" class="hub-nav-btn"><svg class="ic"><use href="#i-clock"/></svg><span>Verlauf</span></button>
+      <button data-panel="downloads" class="hub-nav-btn"><svg class="ic"><use href="#i-download"/></svg><span>Downloads</span></button>
+      <button data-panel="settings" class="hub-nav-btn"><svg class="ic"><use href="#i-gear"/></svg><span>Einstellungen</span></button>
+      <div class="hub-nav-spacer"></div>
+      <button id="hub-close" class="hub-nav-btn"><svg class="ic"><use href="#i-x"/></svg><span>Schließen</span></button>
+    </nav>
+    <div class="hub-content">
+      <section id="panel-history" class="hub-panel">
+        <div class="panel-head">
+          <h2>Verlauf</h2>
+          <div class="panel-head-actions">
+            <div class="mini-search">
+              <svg class="ic dim"><use href="#i-search"/></svg>
+              <input id="history-search" type="text" placeholder="Verlauf durchsuchen …" />
+            </div>
+            <button class="btn danger-ghost" id="history-clear"><svg class="ic"><use href="#i-trash"/></svg> Löschen</button>
+          </div>
+        </div>
+        <div id="history-list" class="panel-scroll"></div>
+      </section>
+
+      <section id="panel-downloads" class="hub-panel">
+        <div class="panel-head"><h2>Downloads</h2></div>
+        <div id="downloads-list" class="panel-scroll"></div>
+      </section>
+
+      <section id="panel-settings" class="hub-panel">
+        <div class="panel-head"><h2>Einstellungen</h2></div>
+        <div id="settings-body" class="panel-scroll"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CONTEXT MENU ===================== -->
+<div id="ctx-menu" class="hidden"></div>
+
+<!-- ===================== UPDATE-HINWEIS ===================== -->
+<div id="update-pop" class="hidden">
+  <div class="up-head">
+    <span class="up-spark"><svg class="ic"><use href="#i-bolt"/></svg></span>
+    <div class="up-titles">
+      <div class="up-title">Update verfügbar</div>
+      <div class="up-sub" id="up-sub">Eine neue Version von NOVA ist bereit.</div>
+    </div>
+    <button class="icon-btn slim" id="up-close" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div class="up-notes" id="up-notes"></div>
+  <div class="up-progress hidden" id="up-progress"><i></i></div>
+  <div class="up-actions">
+    <button class="btn" id="up-later">Später</button>
+    <button class="btn" id="up-page" title="Auf GitHub ansehen"><svg class="ic"><use href="#i-ext"/></svg></button>
+    <button class="btn primary" id="up-now"><svg class="ic"><use href="#i-download"/></svg><span>Jetzt aktualisieren</span></button>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="renderer.js"></script>
+</body>
+</html>
