@@ -59,5 +59,9 @@ cpSync(nm, path.join(appDir, 'node_modules'), {
   },
 });
 
+// Portable-Marker → App nutzt ein eigenes Profil (NovaData) neben der EXE = Werkseinstellungen
+writeFileSync(path.join(out, 'NOVA.portable'), 'NOVA portable profile marker\n');
+
 console.log('\n✓ Fertig:', out);
 console.log('  Starten:', path.join(out, PRODUCT + '.exe'));
+console.log('  Profil:  NovaData neben der EXE (Werkseinstellungen)');

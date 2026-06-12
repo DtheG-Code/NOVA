@@ -15,7 +15,18 @@ const { JsonStore } = require('./store');
 const { importEdgeBookmarks } = require('./edge-import');
 
 app.setName('Nova Browser');
-app.setPath('userData', path.join(app.getPath('appData'), 'NovaBrowser'));
+// Portable-Release (Marker neben der EXE) → eigene Profildaten dort = Werkseinstellungen,
+// unabhängig von Entwickler-/Bestandsprofilen. Sonst normales AppData-Profil.
+try {
+  const portMarker = path.join(path.dirname(process.execPath), 'NOVA.portable');
+  if (fs.existsSync(portMarker)) {
+    app.setPath('userData', path.join(path.dirname(process.execPath), 'NovaData'));
+  } else {
+    app.setPath('userData', path.join(app.getPath('appData'), 'NovaBrowser'));
+  }
+} catch {
+  app.setPath('userData', path.join(app.getPath('appData'), 'NovaBrowser'));
+}
 // Eigene App-Identität → Windows-Taskleiste nutzt unser Icon/Gruppierung
 if (process.platform === 'win32') app.setAppUserModelId('com.spark.nova-browser');
 
