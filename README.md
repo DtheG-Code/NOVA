@@ -39,6 +39,16 @@ eingeloggten claude.ai-Account, **kein API-Key nötig**).
 Eingebettetes claude.ai als andockbares Panel (links/rechts/Split/frei) — zum Chatten, Seiten
 zusammenfassen, erklären oder kritisch bewerten. Öffnet beim Klick immer einen **frischen Chat**.
 
+### 🔒 Website-Security-Analyse (neu in v4.0.2)
+Klick auf das **Schloss-Symbol** in der Adressleiste → NOVA analysiert die Seite mit Claude:
+**Fingerprinting, Tracking, Drittanbieter-Skripte/-Requests, Crypto-Mining, Fake-Logins &
+Daten an Drittserver**. Ergebnis als **schön animierter Report** (Risiko-Ring + Stufe + erklärte Befunde).
+- Reports werden **pro Seite lokal gespeichert** und über eine **geteilte GitHub-Datenbank synchronisiert** —
+  so profitieren auch Geräte **ohne Claude-Abo** von bereits geprüften Seiten.
+- Beim Besuch einer bereits geprüften Seite erscheint ein **Risiko-Punkt am Schloss** + bei hohem Risiko ein
+  dezenter, animierter Hinweis (kein Pop-up-Spam). Die Liste selbst ist nicht einsehbar — nur der Report zur aktuellen Seite.
+- Beitragen (Hochladen neuer Scans) ist optional per **GitHub-Token** in den Einstellungen (Schreiben braucht Auth, auch bei öffentlichem Repo).
+
 ---
 
 ## ✨ Weitere Features

@@ -528,6 +528,47 @@
   </div>
 </div>
 
+<!-- ===================== SECURITY-ANALYSE (Schloss-Symbol) ===================== -->
+<div id="sec-panel" class="sec-panel hidden">
+  <div class="sec-card">
+    <div class="sec-aura"></div>
+    <div class="sec-head">
+      <span class="sec-logo"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/><path d="M9 12l2 2 4-4.5"/></svg></span>
+      <div class="sec-titles"><b>NOVA <span class="sec-acc">Security</span></b><span id="sec-host"></span></div>
+      <button id="sec-rescan" class="sec-icon" title="Neu analysieren"><svg class="ic"><use href="#i-reload"/></svg></button>
+      <button id="sec-close" class="sec-icon" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+
+    <!-- Risiko-Anzeige (Ring + Stufe) -->
+    <div class="sec-gauge">
+      <div class="sec-ring" id="sec-ring">
+        <svg viewBox="0 0 120 120"><circle class="sec-ring-bg" cx="60" cy="60" r="52"/><circle class="sec-ring-fg" id="sec-ring-fg" cx="60" cy="60" r="52"/></svg>
+        <div class="sec-ring-mid"><b id="sec-score">–</b><span>/100</span></div>
+      </div>
+      <div class="sec-level">
+        <span id="sec-level-tag" class="sec-level-tag">—</span>
+        <p id="sec-summary" class="sec-summary"></p>
+        <span id="sec-meta" class="sec-meta"></span>
+      </div>
+    </div>
+
+    <!-- Befund-Liste -->
+    <div id="sec-findings" class="sec-findings"></div>
+
+    <!-- Zustände -->
+    <div id="sec-empty" class="sec-empty hidden">
+      <svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/></svg>
+      <p>Diese Seite wurde noch nicht analysiert.</p>
+      <button id="sec-scan" class="sec-go"><svg class="ic"><use href="#i-operator"/></svg> Sicherheit analysieren</button>
+      <span class="sec-hint">Mit Claude — prüft Fingerprinting, Tracker, Crypto-Mining, Fake-Logins & Drittserver-Daten.</span>
+    </div>
+    <div id="sec-loading" class="sec-loading hidden">
+      <div class="sec-scanbar"><i></i></div>
+      <span id="sec-loading-tx">Analysiere Seite …</span>
+    </div>
+  </div>
+</div>
+
 <!-- ===================== SPACE EDITOR ===================== -->
 <div id="space-edit" class="hidden">
   <div class="se-row">

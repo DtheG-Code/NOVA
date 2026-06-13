@@ -50,7 +50,7 @@ let win = null;
 let ses = null;
 let blocker = null;
 let blockingActive = false;
-let settings, bookmarks, history;
+let settings, bookmarks, history, securityDb;
 const tabBlockCounts = new Map(); // webContentsId -> count
 const tabBlockHosts = new Map(); // webContentsId -> Map(host -> count)
 const whitelistFilters = new Map(); // host -> filter[]
@@ -896,7 +896,10 @@ app.whenReady().then(async () => {
   settings = new JsonStore(path.join(app.getPath('userData'), 'settings.json'), DEFAULT_SETTINGS);
   bookmarks = new JsonStore(path.join(app.getPath('userData'), 'bookmarks.json'), { tree: [] });
   history = new JsonStore(path.join(app.getPath('userData'), 'history.json'), { items: [] });
+  securityDb = new JsonStore(path.join(app.getPath('userData'), 'security-db.json'), {});   // host → Security-Report
   globalDlLimit = settings.get('dlGlobalLimit', 0) || 0;
+  setTimeout(() => { secPull(); }, 4000);                 // geteilte Security-DB beim Start holen
+  setInterval(() => { secPull(); }, 6 * 60 * 60 * 1000);  // danach alle 6 h aktualisieren
 
   nativeTheme.themeSource = settings.get('forceDarkWeb', true) ? 'dark' : 'system';
 
@@ -1351,11 +1354,11 @@ ipcMain.on('music:hwMediaKey', (_e, which) => {
 });
 
 // Suche / Vorschläge
-async function fetchJson(url, ms = 4000) {
+async function fetchJson(url, ms = 4000, headers) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await fetch(url, { signal: ctrl.signal, headers: headers || undefined });
     return await res.json();
   } finally {
     clearTimeout(timer);
@@ -1725,6 +1728,66 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
     return true;
   } catch { return false; }
 });
+
+// ---- Website-Security-Datenbank (lokal + Lese-Sync vom öffentlichen GitHub-Repo) ----
+// Liste der Reports ist NICHT einsehbar; nur der Report zur aktuell besuchten Seite wird abgefragt.
+const SEC_DB_RAW = 'https://raw.githubusercontent.com/DtheG-Code/NOVA/main/security-db.json';
+const SEC_DB_API = 'https://api.github.com/repos/DtheG-Code/NOVA/contents/security-db.json';
+const secHost = (h) => String(h || '').toLowerCase().replace(/^www\./, '').replace(/[:/].*$/, '').trim();
+async function secPull() {
+  try {
+    const json = await fetchJson(SEC_DB_RAW + '?t=' + Date.now(), 9000);
+    if (!json || typeof json !== 'object') return { ok: false };
+    let merged = 0;
+    for (const h of Object.keys(json)) {
+      const remote = json[h]; if (!remote || !remote.ts) continue;
+      const local = securityDb.get(h);
+      if (!local || (remote.ts || 0) > (local.ts || 0)) { securityDb.set(h, remote); merged++; }
+    }
+    return { ok: true, merged };
+  } catch { return { ok: false }; }
+}
+// Beitrag ins ÖFFENTLICHE Repo — nur mit hinterlegtem GitHub-Token (Schreiben braucht IMMER Auth, auch bei public).
+async function secContribute() {
+  const token = (settings.get('securityToken', '') || '').trim();
+  const pending = settings.get('securityPending', {}) || {};
+  if (!token) return { ok: false, reason: 'notoken' };
+  if (!Object.keys(pending).length) return { ok: false, reason: 'empty' };
+  try {
+    const headers = { 'User-Agent': 'NOVA', 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json' };
+    let sha = null, db = {};
+    const cur = await fetchJson(SEC_DB_API + '?ref=main', 9000, headers).catch(() => null);
+    if (cur && cur.sha) { sha = cur.sha; try { db = JSON.parse(Buffer.from(cur.content || '', 'base64').toString('utf8')) || {}; } catch {} }
+    for (const h of Object.keys(pending)) { const r = pending[h]; if (!db[h] || (r.ts || 0) > (db[h].ts || 0)) db[h] = r; }
+    const body = JSON.stringify({
+      message: 'security-db: +' + Object.keys(pending).length + ' Reports (NOVA)',
+      content: Buffer.from(JSON.stringify(db, null, 0), 'utf8').toString('base64'),
+      sha: sha || undefined, branch: 'main',
+    });
+    const ok = await new Promise((resolve) => {
+      const req = net.request({ method: 'PUT', url: SEC_DB_API });
+      Object.entries(headers).forEach(([k, v]) => req.setHeader(k, v));
+      req.on('response', (res) => { resolve((res.statusCode || 0) < 300); res.on('data', () => {}); });
+      req.on('error', () => resolve(false));
+      req.write(body); req.end();
+    });
+    if (ok) { settings.set('securityPending', {}); return { ok: true }; }
+    return { ok: false, reason: 'put' };
+  } catch (e) { return { ok: false, reason: 'err' }; }
+}
+ipcMain.handle('sec:get', (_e, host) => { try { return securityDb.get(secHost(host)) || null; } catch { return null; } });
+ipcMain.handle('sec:save', (_e, rep) => {
+  try {
+    if (!rep || !rep.host) return false;
+    const h = secHost(rep.host); rep.host = h; rep.ts = rep.ts || Date.now();
+    securityDb.set(h, rep);
+    const p = settings.get('securityPending', {}) || {}; p[h] = rep; settings.set('securityPending', p);
+    secContribute().catch(() => {});   // best-effort (nur mit Token)
+    return true;
+  } catch { return false; }
+});
+ipcMain.handle('sec:pull', () => secPull());
+ipcMain.handle('sec:contribute', () => secContribute());
 
 // Session
 ipcMain.on('session:save', (_e, tabs) => settings.set('lastSession', tabs));

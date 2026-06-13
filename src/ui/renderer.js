@@ -958,6 +958,7 @@ function wireWebview(tab) {
       syncNavButtons(tab);
       syncStar(tab);
       syncShieldBadge();
+      if (typeof security !== 'undefined') security.updateChip(tab);   // Security-Report-Punkt am Schloss
     }
     saveSession();
   };
@@ -2061,6 +2062,16 @@ function renderSettings() {
   stepRow.append(stepLab, stepChips);
   agentCard.appendChild(stepRow);
   gAgent.appendChild(agentCard);
+
+  // Sicherheit & Web-Datenbank
+  const gSec = group('Sicherheit');
+  const secCard = el('div', 'set-card');
+  secCard.appendChild(inputRow('GitHub-Token (optional)', 'Nur damit trägt dieses Gerät neue Security-Scans zur geteilten Web-Datenbank bei (repo-Scope). Leer lassen = nur lesen. Liegt lokal.', 'securityToken', 'ghp_…'));
+  secCard.appendChild(buttonRow('Web-Datenbank', 'Geteilte Security-Reports von anderen Geräten jetzt synchronisieren.', 'Jetzt synchronisieren', async (btn) => {
+    btn.disabled = true; const r = await window.nova.security.pull(); btn.disabled = false;
+    toast(r && r.ok ? ('Datenbank synchronisiert (' + (r.merged || 0) + ' neu)') : 'Sync fehlgeschlagen', r && r.ok ? 'i-check' : 'i-warn');
+  }));
+  gSec.appendChild(secCard);
 
   // Suchmaschine
   const gEngine = group('Suchmaschine');
@@ -5723,6 +5734,154 @@ const updater = (() => {
       else if (manual) toast('NOVA ist auf dem neuesten Stand', 'i-check');
     },
   };
+})();
+
+/* ============================================================ Website-Security-Analyse (Schloss-Symbol) */
+const security = (() => {
+  const panel = $('#sec-panel');
+  let curHost = '', curReport = null;
+
+  // In die Seite injizierter Sammler: Signale für die Risiko-Bewertung (kein echtes Hooking → robust)
+  const SECSCAN = `(function(){try{
+    var host=location.hostname.replace(/^www\\./,'');
+    var https=location.protocol==='https:';
+    var scripts=Array.prototype.slice.call(document.scripts);
+    var ext=[], inlineLen=0, inlineTxt='';
+    scripts.forEach(function(s){ if(s.src){ try{var h=new URL(s.src).hostname.replace(/^www\\./,''); if(h&&h!==host&&host.indexOf(h)<0&&h.indexOf(host)<0) ext.push(h);}catch(e){} } else { var t=s.textContent||''; inlineLen+=t.length; if(inlineTxt.length<24000) inlineTxt+=' '+t; } });
+    var thirdScripts=Array.from(new Set(ext)).slice(0,40);
+    var reqHosts=[]; try{ performance.getEntriesByType('resource').forEach(function(r){ try{var h=new URL(r.name).hostname.replace(/^www\\./,''); if(h&&h!==host) reqHosts.push(h);}catch(e){} }); }catch(e){}
+    reqHosts=Array.from(new Set(reqHosts)).slice(0,60);
+    var fpHits=[]; var fpPat={'Canvas-Fingerprint':/toDataURL|getImageData|measureText/, 'WebGL-Fingerprint':/WEBGL_debug_renderer|getExtension\\(|getParameter\\(/, 'Audio-Fingerprint':/AudioContext|createOscillator|createAnalyser/, 'Geraete-Enumeration':/navigator\\.(hardwareConcurrency|deviceMemory|userAgentData)|enumerateDevices|fonts\\.check/};
+    for(var k in fpPat){ try{ if(fpPat[k].test(inlineTxt)) fpHits.push(k); }catch(e){} }
+    var miner=/coinhive|cryptonight|coin-?hive|webminerpool|miner\\.start|cryptoloot|wasmMiner|hashrate/i.test(inlineTxt);
+    var forms=[]; Array.prototype.slice.call(document.forms).forEach(function(f){ if(!f.querySelector('input[type=password]')) return; var action=f.getAttribute('action')||location.href; var ah=''; try{ah=new URL(action,location.href).hostname.replace(/^www\\./,'');}catch(e){} forms.push({actionHost:ah, sameHost:(!ah||ah===host), insecure:(String(action).indexOf('http://')===0 || !https)}); });
+    return {ok:true, host:host, url:location.href, https:https, title:(document.title||'').slice(0,120), thirdPartyScripts:thirdScripts, thirdPartyRequestHosts:reqHosts, inlineScriptKB:Math.round(inlineLen/1024), fingerprint:fpHits, cryptoMiner:miner, passwordFields:document.querySelectorAll('input[type=password]').length, loginForms:forms.slice(0,6)};
+  }catch(e){return {ok:false,error:String(e)};}})()`;
+
+  function secPrompt(s) {
+    return `Du bist ein Web-Security-Analyst. Bewerte SICHERHEIT & PRIVATSPHÄRE dieser Seite anhand der Signale (knapp, sachlich, keine Panikmache).\n`
+      + `Host: ${s.host}\nHTTPS: ${s.https}\nTitel: ${s.title}\n`
+      + `Drittanbieter-Skripte (${s.thirdPartyScripts.length}): ${s.thirdPartyScripts.join(', ') || '–'}\n`
+      + `Drittanbieter-Request-Hosts (${s.thirdPartyRequestHosts.length}): ${s.thirdPartyRequestHosts.slice(0, 30).join(', ') || '–'}\n`
+      + `Fingerprinting-Signale: ${s.fingerprint.join(', ') || 'keine'}\n`
+      + `Crypto-Miner-Muster: ${s.cryptoMiner ? 'JA' : 'nein'}\n`
+      + `Passwortfelder: ${s.passwordFields} · Login-Formulare: ${JSON.stringify(s.loginForms)}\n`
+      + `Inline-JS: ${s.inlineScriptKB} KB\n\n`
+      + `Antworte GENAU in diesem Format, sonst nichts:\n`
+      + `RISIKO: <0-100>\nSTUFE: <sicher|niedrig|mittel|hoch|kritisch>\nZUSAMMENFASSUNG: <1-2 Sätze>\nBEFUNDE:\n`
+      + `- [<kategorie: fingerprinting|tracking|crypto|login|drittanbieter|unsicher|allgemein>|<info|warn|gefahr>] <Titel> :: <kurze, verständliche Erklärung>\n`
+      + `(2-6 Befunde; wenn die Seite sicher ist, gib trotzdem 1-2 positive Info-Befunde.)`;
+  }
+
+  const LEVELS = { sicher: { c: '#2dd4bf', t: 'Sicher' }, niedrig: { c: '#a3e635', t: 'Niedriges Risiko' }, mittel: { c: '#fbbf24', t: 'Mittleres Risiko' }, hoch: { c: '#fb923c', t: 'Hohes Risiko' }, kritisch: { c: '#ff4d6d', t: 'Kritisch' } };
+  function parseReport(r, host) {
+    const txt = (r && typeof r === 'object') ? (r.text || r.raw || '') : (r || '');
+    if (!txt) return null;
+    const score = Math.max(0, Math.min(100, parseInt((/RISIKO\s*:\s*(\d{1,3})/i.exec(txt) || [])[1], 10) || 0));
+    let level = ((/STUFE\s*:\s*(sicher|niedrig|mittel|hoch|kritisch)/i.exec(txt) || [])[1] || '').toLowerCase();
+    if (!level) level = score >= 75 ? 'kritisch' : score >= 55 ? 'hoch' : score >= 35 ? 'mittel' : score >= 15 ? 'niedrig' : 'sicher';
+    const summary = ((/ZUSAMMENFASSUNG\s*:\s*(.+)/i.exec(txt) || [])[1] || '').split('\n')[0].trim();
+    const findings = [];
+    txt.split('\n').forEach((ln) => {
+      const m = /^\s*[-*]\s*\[([a-zäöü]+)\s*\|\s*(info|warn|gefahr)\]\s*(.+?)\s*(?:::|–|-)\s*(.+)$/i.exec(ln);
+      if (m) findings.push({ cat: m[1].toLowerCase(), sev: m[2].toLowerCase(), title: m[3].trim().slice(0, 80), detail: m[4].trim().slice(0, 240) });
+    });
+    return { host, score, level, summary: summary || 'Analyse abgeschlossen.', findings, ts: Date.now(), source: 'lokal' };
+  }
+
+  const CAT_ICON = { fingerprinting: '🫆', tracking: '🛰️', crypto: '⛏️', login: '🔑', drittanbieter: '🔗', unsicher: '⚠️', allgemein: '🛡️' };
+  function render(rep) {
+    showState('report');
+    $('#sec-host').textContent = rep.host;
+    const lv = LEVELS[rep.level] || LEVELS.mittel;
+    $('#sec-score').textContent = rep.score;
+    const circ = 2 * Math.PI * 52;
+    const fg = $('#sec-ring-fg');
+    fg.style.stroke = lv.c; fg.style.strokeDasharray = circ; fg.style.strokeDashoffset = circ * (1 - rep.score / 100);
+    $('#sec-ring').style.setProperty('--lvc', lv.c);
+    const tag = $('#sec-level-tag'); tag.textContent = lv.t; tag.style.background = lv.c + '22'; tag.style.color = lv.c; tag.style.borderColor = lv.c + '88';
+    $('#sec-summary').textContent = rep.summary || '';
+    const d = rep.ts ? new Date(rep.ts).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    $('#sec-meta').textContent = 'Geprüft am ' + d + (rep.source === 'community' ? ' · Community-Datenbank' : ' · lokal');
+    const box = $('#sec-findings'); box.innerHTML = '';
+    (rep.findings || []).forEach((f, i) => {
+      const row = el('div', 'sec-find sev-' + (f.sev || 'info'));
+      row.style.animationDelay = (i * 60) + 'ms';
+      row.appendChild(el('span', 'sec-find-ic', CAT_ICON[f.cat] || '🛡️'));
+      const tx = el('div', 'sec-find-tx');
+      tx.appendChild(el('b', null, f.title || f.cat));
+      tx.appendChild(el('span', null, f.detail || ''));
+      row.appendChild(tx);
+      box.appendChild(row);
+    });
+  }
+  function showState(which) {
+    $('#sec-empty').classList.toggle('hidden', which !== 'empty');
+    $('#sec-loading').classList.toggle('hidden', which !== 'loading');
+    $('#sec-gauge-wrap');
+    panel.classList.toggle('sec-has-report', which === 'report');
+  }
+
+  async function open() {
+    const tab = activeTab();
+    const host = tab && isWebUrl(tab.url) ? hostOf(tab.url) : '';
+    panel.classList.remove('hidden');
+    $('#sec-host').textContent = host || 'Diese Seite';
+    if (!host) { showState('empty'); $('#sec-scan').disabled = true; return; }
+    $('#sec-scan').disabled = false;
+    curHost = host;
+    let rep = null; try { rep = await window.nova.security.get(host); } catch {}
+    if (rep) { curReport = rep; render(rep); }
+    else { curReport = null; showState('empty'); }
+  }
+  function close() { panel.classList.add('hidden'); }
+
+  async function analyze() {
+    const tab = activeTab();
+    if (!tab || !tab.wv || !isWebUrl(tab.url)) { showState('empty'); return; }
+    showState('loading'); $('#sec-loading-tx').textContent = 'Sammle Seiten-Signale …';
+    let sig = null; try { sig = await tab.wv.executeJavaScript(SECSCAN, true); } catch {}
+    if (!sig || !sig.ok) { showState('empty'); toast('Seite nicht lesbar', 'i-warn'); return; }
+    $('#sec-loading-tx').textContent = 'Claude bewertet die Sicherheit …';
+    let ready = false; try { ready = await claude.prepare(); } catch {}
+    if (!ready) { showState('empty'); toast('Claude nicht bereit — bitte anmelden', 'i-warn'); claude.release(); return; }
+    let reply = null; try { reply = await claude.runOnce(secPrompt(sig)); } catch {}
+    claude.release();
+    const rep = parseReport(reply, sig.host);
+    if (!rep) { showState('empty'); toast('Analyse fehlgeschlagen', 'i-warn'); return; }
+    curReport = rep; curHost = sig.host;
+    try { await window.nova.security.save(rep); } catch {}
+    render(rep);
+    updateChip(activeTab());
+  }
+
+  // Schloss-Symbol: Risiko-Punkt setzen, wenn ein Report vorliegt (ohne die Liste preiszugeben)
+  async function updateChip(tab) {
+    const chip = $('#omni-sec'); if (!chip) return;
+    chip.querySelectorAll('.sec-dot').forEach((n) => n.remove());
+    chip.classList.remove('risk-mittel', 'risk-hoch', 'risk-kritisch', 'risk-sicher', 'risk-niedrig');
+    const host = tab && isWebUrl(tab.url) ? hostOf(tab.url) : '';
+    if (!host) return;
+    let rep = null; try { rep = await window.nova.security.get(host); } catch {}
+    if (!rep) return;
+    chip.classList.add('risk-' + (rep.level || 'mittel'));
+    const dot = el('span', 'sec-dot'); chip.appendChild(dot);
+    chip.title = 'Security-Report: ' + (LEVELS[rep.level] || LEVELS.mittel).t + ' — klicken für Details';
+    // Bei hohem/kritischem Risiko einmal kurz auf den Report aufmerksam machen (animiert, kein Pop-up-Spam)
+    if ((rep.level === 'hoch' || rep.level === 'kritisch') && curHost !== host + '|warned') {
+      curHost = host + '|warned';
+      chip.classList.add('sec-pulse'); setTimeout(() => chip.classList.remove('sec-pulse'), 4000);
+      toast('⚠ Sicherheitshinweis für ' + host + ' — Schloss-Symbol antippen', 'i-warn');
+    }
+  }
+
+  $('#omni-sec').addEventListener('click', open);
+  $('#sec-close').addEventListener('click', close);
+  $('#sec-scan').addEventListener('click', analyze);
+  $('#sec-rescan').addEventListener('click', analyze);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.classList.contains('hidden')) close(); });
+
+  return { open, close, analyze, updateChip };
 })();
 
 /* ============================================================ init */

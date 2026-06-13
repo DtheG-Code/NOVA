@@ -85,6 +85,13 @@ contextBridge.exposeInMainWorld('nova', {
     onStats: on('net:stats'),
   },
 
+  security: {
+    get: invoke('sec:get'),         // (host) → gespeicherter Report oder null
+    save: invoke('sec:save'),       // (report) → lokal speichern (+ Beitrag, falls Token)
+    pull: invoke('sec:pull'),       // geteilte DB von GitHub holen + mergen
+    contribute: invoke('sec:contribute'),
+  },
+
   update: {
     check: invoke('update:check'),
     download: invoke('update:download'),
