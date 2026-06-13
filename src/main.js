@@ -1672,58 +1672,60 @@ ipcMain.handle('update:download', async () => {
     req.end();
   });
 });
-// ECHTES In-Place-Update: ZIP still entpacken → Dateien über die Installation spiegeln → NOVA neu starten.
-// Läuft über ein losgelöstes PowerShell-Skript (überlebt das Beenden von NOVA). Braucht das
-// Verzeichnis Adminrechte (z. B. Programme), wird per UAC nachgefragt. Kein Explorer, keine Webseite.
+// ECHTES In-Place-Update am EXAKTEN Installationsort (dirname(process.execPath) — stimmt auch bei Start
+// über Verknüpfungen). Ein .bat wird über `cmd /c start` LOSGELÖST gestartet (eigener Prozess, NICHT in
+// NOVAs Job-Object → überlebt das Beenden), beendet NOVA hart (taskkill), entpackt, spiegelt (robocopy /E,
+// NovaData bleibt) und STARTET NOVA NEU. Sichtbares „wird aktualisiert"-Fenster + Log. UAC nur falls nötig.
 ipcMain.handle('update:install', async (_e, zipPath) => {
   try {
     if (!zipPath || !fs.existsSync(zipPath)) return false;
     if (process.platform !== 'win32') { shell.openPath(zipPath); setTimeout(() => app.quit(), 800); return true; }
     const exePath = process.execPath;
     const installDir = path.dirname(exePath);
-    const procName = path.basename(exePath).replace(/\.exe$/i, '');
+    const exeName = path.basename(exePath);
     const ts = Date.now();
     const tmp = app.getPath('temp');
-    const stage = path.join(tmp, 'nova-update-' + ts);
-    const scriptPath = path.join(tmp, 'nova-update-' + ts + '.ps1');
-    const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
-    const ps = [
-      "$ErrorActionPreference='SilentlyContinue'",
-      '$zip=' + q(zipPath),
-      '$stage=' + q(stage),
-      '$dest=' + q(installDir),
-      '$exe=' + q(exePath),
-      '$proc=' + q(procName),
-      'Start-Sleep -Seconds 2',
-      'for($i=0;$i -lt 10;$i++){ if(-not(Get-Process -Name $proc -ErrorAction SilentlyContinue)){break}; Start-Sleep -Milliseconds 500 }',
-      'Get-Process -Name $proc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue',
-      'Start-Sleep -Milliseconds 1200',
-      'New-Item -ItemType Directory -Force -Path $stage | Out-Null',
-      'Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force',
-      "$src=Join-Path $stage 'NOVA'",
-      'if(-not (Test-Path $src)){ $src=$stage }',
-      // /E: kopieren+ueberschreiben, OHNE Extras zu loeschen (NovaData-Profil bleibt erhalten)
-      'robocopy $src $dest /E /R:2 /W:1 /NFL /NDL /NJH /NJS | Out-Null',
-      'if($LASTEXITCODE -lt 8){ Start-Process -FilePath $exe -WorkingDirectory $dest }',
-      'Start-Sleep -Seconds 1',
-      'Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue',
-      'Remove-Item -Force $zip -ErrorAction SilentlyContinue',
-      'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
+    const stage = path.join(tmp, 'nova-upd-' + ts);
+    const batPath = path.join(tmp, 'nova-upd-' + ts + '.bat');
+    const log = path.join(tmp, 'nova-upd-' + ts + '.log');
+    const bat = [
+      '@echo off',
+      'title NOVA Update',
+      'echo.',
+      'echo    NOVA wird aktualisiert - bitte einen Moment warten...',
+      'echo    (Dieses Fenster schliesst sich automatisch.)',
+      'echo.',
+      `> "${log}" echo NOVA-Update gestartet`,
+      'timeout /t 1 /nobreak >nul',
+      `taskkill /IM "${exeName}" /F >nul 2>&1`,
+      'timeout /t 2 /nobreak >nul',
+      `taskkill /IM "${exeName}" /F >nul 2>&1`,
+      `>> "${log}" echo entpacke...`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${stage}' -Force" >> "${log}" 2>&1`,
+      `set "SRC=${stage}\\NOVA"`,
+      `if not exist "%SRC%\\${exeName}" set "SRC=${stage}"`,
+      `>> "${log}" echo kopiere von "%SRC%" nach "${installDir}"`,
+      `robocopy "%SRC%" "${installDir}" /E /R:3 /W:2 /NFL /NDL /NJH /NJS >> "${log}" 2>&1`,
+      `>> "${log}" echo robocopy-Ergebnis %ERRORLEVEL%`,
+      `>> "${log}" echo starte NOVA neu`,
+      `start "" /D "${installDir}" "${exePath}"`,
+      'timeout /t 1 /nobreak >nul',
+      `rmdir /S /Q "${stage}" >nul 2>&1`,
+      `del /Q "${zipPath}" >nul 2>&1`,
+      'del /Q "%~f0" >nul 2>&1',
     ].join('\r\n');
-    fs.writeFileSync(scriptPath, String.fromCharCode(0xFEFF) + ps, 'utf8');   // BOM → PowerShell liest Pfade mit Umlauten korrekt
+    fs.writeFileSync(batPath, bat, 'ascii');   // .bat: KEIN BOM (sonst bricht @echo off)
 
-    // Schreibrecht im Installationsordner prüfen → sonst per UAC elevated ausführen
+    // Schreibrecht am Installationsort prüfen → sonst per UAC elevated ausführen
     let writable = true;
     try { const t = path.join(installDir, '.nova-wtest-' + ts); fs.writeFileSync(t, 'x'); fs.unlinkSync(t); } catch { writable = false; }
-    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', scriptPath];
     if (writable) {
-      spawn('powershell.exe', args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      setTimeout(() => app.quit(), 700);                 // App beenden → Skript spiegelt + startet neu
+      // cmd /c start → echte Loslösung (überlebt app.quit); sichtbares Update-Fenster
+      spawn('cmd.exe', ['/c', 'start "" "' + batPath + '"'], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }).unref();
+      setTimeout(() => app.quit(), 500);
     } else {
-      // UAC-Abfrage: elevated PowerShell führt das Update-Skript aus (force-killt NOVA selbst).
-      const inner = "Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File'," + q(scriptPath) + ')';
-      spawn('powershell.exe', ['-NoProfile', '-Command', inner], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-      // Nicht selbst beenden: bei UAC-Abbruch bleibt NOVA normal offen; bei Zustimmung killt das Skript NOVA.
+      // UAC: bat elevated starten; das bat taskkillt NOVA selbst (kein app.quit nötig → bei Abbruch bleibt NOVA offen)
+      spawn('powershell.exe', ['-NoProfile', '-Command', "Start-Process -FilePath '" + batPath.replace(/'/g, "''") + "' -Verb RunAs"], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     }
     return true;
   } catch { return false; }
