@@ -276,23 +276,13 @@ function createTab(url = NEWTAB, opts = {}) {
     pinned: !!opts.pinned,
     title: opts.title || 'Neuer Tab', favicon: null, loading: false,
     wcId: null, audible: false, muted: false, pendingUrl: opts.lazy ? url : null,
-    thumb: null, thumbTs: 0,
+    thumb: null, thumbTs: 0, lastActive: Date.now(), suspended: false,
   };
 
   const wrap = el('div', 'wv-wrap');
-  const wv = document.createElement('webview');
-  wv.setAttribute('partition', PARTITION);
-  wv.setAttribute('allowpopups', '');
-  if (state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
-  wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
-  wv.setAttribute('src', opts.lazy ? 'about:blank' : url);
-  wrap.appendChild(buildPaneBar(tab, wv));
-  wrap.appendChild(wv);
   $('#webviews').appendChild(wrap);
-
-  tab.wv = wv;
   tab.wrap = wrap;
-  wireWebview(tab);
+  mountWebview(tab, opts.lazy ? 'about:blank' : url);
 
   tab.el = buildTabElement(tab);
 
@@ -307,6 +297,53 @@ function createTab(url = NEWTAB, opts = {}) {
   saveSession();
   return tab;
 }
+
+// Webview in tab.wrap erzeugen + verdrahten (für createTab UND wakeTab/RAM-Sparen)
+function mountWebview(tab, src) {
+  const wv = document.createElement('webview');
+  wv.setAttribute('partition', PARTITION);
+  wv.setAttribute('allowpopups', '');
+  if (state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
+  wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
+  wv.setAttribute('src', src);
+  tab.wrap.appendChild(buildPaneBar(tab, wv));
+  tab.wrap.appendChild(wv);
+  tab.wv = wv;
+  wireWebview(tab);
+  return wv;
+}
+
+/* ---- RAM sparen: inaktive Tabs pausieren (Renderer-Prozess freigeben) ---- */
+function suspendTab(tab) {
+  if (!tab || tab.suspended || tab.id === state.activeId) return;
+  const sp = state.spaces.find((s) => s.id === tab.spaceId);
+  if (sp && sp.splitTabId === tab.id) return;   // im Split sichtbar
+  if (tab.audible || tab.loading) return;        // spielt Audio / lädt gerade
+  const u = tab.pendingUrl || tab.url;
+  if (!isWebUrl(u)) return;                       // interne Seiten sind billig
+  tab.suspendedUrl = u;
+  try { tab.wv && tab.wv.remove(); } catch {}
+  tab.wrap.innerHTML = '';
+  tab.wv = null; tab.wcId = null; tab.suspended = true;
+  tab.el.classList.add('suspended');
+}
+function wakeTab(tab) {
+  if (!tab || !tab.suspended) return;
+  tab.suspended = false;
+  tab.el.classList.remove('suspended');
+  tab.wrap.innerHTML = '';
+  mountWebview(tab, tab.suspendedUrl || tab.url || NEWTAB);
+}
+// regelmäßig prüfen: lange inaktive Hintergrund-Tabs pausieren
+setInterval(() => {
+  if (state.settings.tabSuspend === false) return;
+  const limit = Math.max(1, state.settings.tabSuspendMin || 15) * 60000;
+  const now = Date.now();
+  for (const t of state.tabs) {
+    if (t.suspended || t.id === state.activeId) continue;
+    if (now - (t.lastActive || now) >= limit) suspendTab(t);
+  }
+}, 60000);
 
 /* ---- Pro-Pane-Navigationsleiste (Split View) */
 function buildPaneBar(tab, wv) {
@@ -534,6 +571,8 @@ function updateTabFavicon(tab) {
 function activateTab(id) {
   const tab = getTab(id);
   if (!tab) return;
+  tab.lastActive = Date.now();
+  if (tab.suspended) wakeTab(tab); // pausierten Tab aufwecken
   if (tab.spaceId !== state.currentSpaceId) {
     state.currentSpaceId = tab.spaceId;
     applyAccent();
@@ -740,6 +779,7 @@ function toggleSplitWith(tabId) {
   } else {
     sp.splitTabId = tabId;
   }
+  if (sp.splitTabId) { const pt = getTab(sp.splitTabId); if (pt && pt.suspended) wakeTab(pt); }
   updateWebviewLayout();
   syncTabActiveClasses();
 }
@@ -1533,6 +1573,7 @@ function openHub(panel = 'history') {
   if (panel === 'history') renderHistory();
   if (panel === 'downloads') renderDownloads();
   if (panel === 'settings') renderSettings();
+  if (panel === 'plugins') renderPlugins();
 }
 function closeHub() { $('#hub').classList.add('hidden'); }
 $('#hub-close').addEventListener('click', closeHub);
@@ -1684,6 +1725,225 @@ window.nova.downloads.onUpdate((meta) => {
 });
 
 /* ---- settings panel */
+/* ============================================================ Plugin-Store */
+// Eingebaute NOVA-Plugins (Verhalten lebt in webview-preload.js). 'adblock' ist ein
+// Sonderfall, der die bestehende Netzwerk-Engine über adblockEnabled schaltet.
+const PLUGIN_CATALOG = [
+  { id: 'adblock', special: 'adblock', ic: 'i-shield', cat: 'Datenschutz', name: 'Werbe- & Tracker-Blocker', desc: 'Blockiert Werbung, Tracker und Cookie-Banner netzwerkweit mit der AdGuard-Filterengine.' },
+  { id: 'cookiekill', ic: 'i-trash-sm', cat: 'Datenschutz', name: 'Cookie-Banner wegklicken', desc: 'Bestätigt oder entfernt nervige Cookie-/Consent-Banner automatisch.' },
+  { id: 'darkmode', ic: 'i-moon', cat: 'Aussehen', name: 'Dunkelmodus erzwingen', desc: 'Invertiert helle Webseiten zu einem augenschonenden Dunkeldesign (für Seiten ohne eigenen Dark Mode).' },
+  { id: 'unblock', ic: 'i-eye', cat: 'Produktivität', name: 'Rechtsklick & Kopieren erzwingen', desc: 'Hebt Sperren für Rechtsklick, Markieren und Kopieren auf Webseiten auf.' },
+  { id: 'videospeed', ic: 'i-gauge', cat: 'Medien', name: 'Video-Geschwindigkeit', desc: 'Steuere jedes HTML5-Video per Tastatur: S langsamer, D schneller, R zurück, X/Z springen.' },
+  { id: 'scrolltop', ic: 'i-up-down', cat: 'Produktivität', name: 'Nach-oben-Button', desc: 'Blendet einen schwebenden Button ein, um schnell zum Seitenanfang zu springen.' },
+  { id: 'autohttps', ic: 'i-shield', cat: 'Datenschutz', name: 'HTTPS erzwingen', desc: 'Leitet unsichere http-Seiten automatisch auf die verschlüsselte https-Variante um.' },
+];
+
+const plugState = { native: {}, userscripts: [], extensions: [], tab: 'discover' };
+
+async function renderPlugins() {
+  try {
+    const st = await window.nova.plugins.state();
+    plugState.native = st.native || {};
+    plugState.userscripts = st.userscripts || [];
+    plugState.extensions = st.extensions || [];
+  } catch {}
+  // adblock-Status aus den Einstellungen spiegeln
+  plugState.native.adblock = !!state.settings.adblockEnabled;
+  // Sub-Tabs verdrahten (einmalig)
+  if (!renderPlugins._wired) {
+    renderPlugins._wired = true;
+    for (const t of document.querySelectorAll('#plug-tabs .plug-tab')) {
+      t.addEventListener('click', () => {
+        plugState.tab = t.dataset.ptab;
+        for (const x of document.querySelectorAll('#plug-tabs .plug-tab')) x.classList.toggle('active', x === t);
+        paintPlugins();
+      });
+    }
+  }
+  for (const x of document.querySelectorAll('#plug-tabs .plug-tab')) x.classList.toggle('active', x.dataset.ptab === plugState.tab);
+  paintPlugins();
+}
+
+function paintPlugins() {
+  const body = $('#plugins-body');
+  body.innerHTML = '';
+  if (plugState.tab === 'discover') paintPluginDiscover(body);
+  else if (plugState.tab === 'scripts') paintUserscripts(body);
+  else paintExtensions(body);
+}
+
+function paintPluginDiscover(body) {
+  const intro = el('p', 'plug-intro', 'Eingebaute NOVA-Plugins — sofort einsatzbereit, kein Download nötig. Änderungen greifen beim nächsten Laden einer Seite.');
+  body.appendChild(intro);
+  const cats = [...new Set(PLUGIN_CATALOG.map((p) => p.cat))];
+  for (const cat of cats) {
+    body.appendChild(el('div', 'plug-cat', cat));
+    const grid = el('div', 'plug-grid');
+    for (const p of PLUGIN_CATALOG.filter((x) => x.cat === cat)) {
+      const on = !!plugState.native[p.id];
+      const card = el('div', 'plug-card' + (on ? ' on' : ''));
+      const head = el('div', 'plug-card-head');
+      const ico = el('div', 'plug-ico'); ico.appendChild(icon(p.ic)); head.appendChild(ico);
+      const sw = el('label', 'switch');
+      const inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = on;
+      inp.addEventListener('change', async () => {
+        card.classList.toggle('on', inp.checked);
+        if (p.special === 'adblock') {
+          state.settings.adblockEnabled = inp.checked;
+          await window.nova.settings.set({ adblockEnabled: inp.checked });
+        } else {
+          plugState.native = await window.nova.plugins.setNative({ id: p.id, on: inp.checked });
+        }
+      });
+      sw.appendChild(inp); sw.appendChild(el('i')); head.appendChild(sw);
+      card.appendChild(head);
+      card.appendChild(el('div', 'plug-name', p.name));
+      card.appendChild(el('div', 'plug-desc', p.desc));
+      grid.appendChild(card);
+    }
+    body.appendChild(grid);
+  }
+}
+
+function paintUserscripts(body) {
+  const bar = el('div', 'plug-bar');
+  bar.appendChild(el('p', 'plug-intro', 'Eigene JavaScript-Skripte, die auf passenden Seiten laufen — wie Tampermonkey/Greasemonkey.'));
+  const add = el('button', 'btn primary'); add.appendChild(icon('i-plus')); add.appendChild(el('span', null, 'Neues Skript'));
+  add.addEventListener('click', () => openUserscriptEditor());
+  bar.appendChild(add);
+  body.appendChild(bar);
+
+  if (!plugState.userscripts.length) {
+    const es = el('div', 'empty-state'); es.appendChild(icon('i-code'));
+    es.appendChild(el('span', null, 'Noch keine Userscripts. Lege eins an, um z. B. Layouts anzupassen oder Funktionen hinzuzufügen.'));
+    body.appendChild(es); return;
+  }
+  for (const us of plugState.userscripts) {
+    const row = el('div', 'us-row');
+    const sw = el('label', 'switch');
+    const inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = us.enabled !== false;
+    inp.addEventListener('change', async () => { plugState.userscripts = await window.nova.plugins.toggleUserscript({ id: us.id, on: inp.checked }); });
+    sw.appendChild(inp); sw.appendChild(el('i'));
+    const info = el('div', 'us-info');
+    info.appendChild(el('b', null, us.name || 'Skript'));
+    info.appendChild(el('span', null, us.matches || '*'));
+    const edit = el('button', 'icon-btn slim'); edit.title = 'Bearbeiten'; edit.appendChild(icon('i-sliders'));
+    edit.addEventListener('click', () => openUserscriptEditor(us));
+    const del = el('button', 'icon-btn slim'); del.title = 'Löschen'; del.appendChild(icon('i-trash-sm'));
+    del.addEventListener('click', async () => { plugState.userscripts = await window.nova.plugins.removeUserscript(us.id); paintPlugins(); });
+    row.append(sw, info, edit, del);
+    body.appendChild(row);
+  }
+}
+
+function openUserscriptEditor(us) {
+  const ov = el('div', 'us-editor-ov');
+  const box = el('div', 'us-editor');
+  box.appendChild(el('h3', null, us ? 'Skript bearbeiten' : 'Neues Userscript'));
+  const nameI = el('input', 'set-input'); nameI.placeholder = 'Name (z. B. „GitHub Wide")'; nameI.value = us?.name || '';
+  const matchI = el('input', 'set-input'); matchI.placeholder = 'Seiten-Muster, z. B. https://github.com/*  (mehrere mit Komma; * = alle)'; matchI.value = us?.matches || '*';
+  const codeT = el('textarea', 'us-code'); codeT.placeholder = '// JavaScript, läuft auf passenden Seiten\ndocument.body.style.background = "#101018";'; codeT.value = us?.code || '';
+  box.append(labelWrap('Name', nameI), labelWrap('Läuft auf', matchI), labelWrap('Code', codeT));
+  const foot = el('div', 'us-editor-foot');
+  const cancel = el('button', 'btn', 'Abbrechen'); cancel.addEventListener('click', () => ov.remove());
+  const save = el('button', 'btn primary', 'Speichern');
+  save.addEventListener('click', async () => {
+    plugState.userscripts = await window.nova.plugins.saveUserscript({
+      id: us?.id, name: nameI.value.trim() || 'Skript', matches: matchI.value.trim() || '*', code: codeT.value, enabled: us ? us.enabled !== false : true,
+    });
+    ov.remove(); paintPlugins();
+  });
+  foot.append(cancel, save);
+  box.appendChild(foot);
+  ov.appendChild(box);
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  setTimeout(() => nameI.focus(), 30);
+}
+function labelWrap(label, inputEl) {
+  const w = el('div', 'us-field');
+  w.appendChild(el('label', null, label));
+  w.appendChild(inputEl);
+  return w;
+}
+
+function paintExtensions(body) {
+  body.appendChild(el('p', 'plug-intro', 'Echte Chrome-Erweiterungen — such direkt im offiziellen Chrome Web Store und installiere mit einem Klick. Hinweis: nicht jede Erweiterung ist in NOVA voll funktionsfähig (manche brauchen Funktionen, die nur der echte Chrome bietet).'));
+
+  // 1) Im Chrome Web Store suchen → echte Store-Seite öffnen, dort 1-Klick-Installation
+  const search = el('div', 'ext-store');
+  const sinp = el('input', 'set-input');
+  sinp.placeholder = 'Erweiterung im Chrome Web Store suchen (z. B. „NordPass", „Bitwarden") …';
+  const sgo = el('button', 'btn primary'); sgo.appendChild(icon('i-search')); sgo.appendChild(el('span', null, 'Suchen'));
+  const doSearch = () => {
+    const q = sinp.value.trim();
+    const url = q ? 'https://chromewebstore.google.com/search/' + encodeURIComponent(q) : 'https://chromewebstore.google.com/';
+    createTab(url);
+    closeHub();
+  };
+  sgo.addEventListener('click', doSearch);
+  sinp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+  search.append(sinp, sgo);
+  body.appendChild(search);
+
+  const hint = el('div', 'ext-hint');
+  hint.appendChild(icon('i-info'));
+  hint.appendChild(el('span', null, 'Der Store öffnet sich als Tab. Auf der Seite einer Erweiterung erscheint unten rechts der Button „➕ In NOVA installieren". Danach taucht sie hier und (mit Icon) in der Topbar auf.'));
+  body.appendChild(hint);
+
+  // 2) Fortgeschritten: Link/ID einfügen oder Ordner laden
+  const adv = el('details', 'ext-adv');
+  adv.appendChild(el('summary', null, 'Erweitert: per Link/ID oder entpacktem Ordner'));
+  const store = el('div', 'ext-store');
+  const inp = el('input', 'set-input');
+  inp.placeholder = 'Store-Link oder Erweiterungs-ID einfügen …';
+  const go = el('button', 'btn'); go.appendChild(icon('i-download')); go.appendChild(el('span', null, 'Installieren'));
+  const doInstall = async () => {
+    const val = inp.value.trim();
+    if (!val) { inp.focus(); return; }
+    go.disabled = true; const lbl = go.querySelector('span'); const old = lbl.textContent; lbl.textContent = 'Lädt …';
+    const r = await window.nova.plugins.installFromStore(val);
+    go.disabled = false; lbl.textContent = old;
+    if (r && r.ok) { inp.value = ''; toast(`„${r.ext.name}" installiert — Seiten neu laden, damit sie greift.`); renderPlugins(); }
+    else toast('Installation fehlgeschlagen: ' + ((r && r.error) || 'unbekannt'), 'i-x');
+  };
+  go.addEventListener('click', doInstall);
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doInstall(); });
+  store.append(inp, go);
+  adv.appendChild(store);
+  const folderBar = el('div', 'plug-bar');
+  folderBar.appendChild(el('span', 'ext-or', 'oder eine entpackte Erweiterung vom Ordner:'));
+  const add = el('button', 'btn'); add.appendChild(icon('i-puzzle-add')); add.appendChild(el('span', null, 'Ordner laden'));
+  add.addEventListener('click', async () => {
+    const r = await window.nova.plugins.loadExtension();
+    if (r && r.ok) { toast(`Erweiterung „${r.ext.name}" geladen — Seiten neu laden, damit sie greift.`); renderPlugins(); }
+    else if (r && !r.canceled) toast('Konnte Erweiterung nicht laden: ' + (r.error || 'unbekannt'), 'i-x');
+  });
+  folderBar.appendChild(add);
+  adv.appendChild(folderBar);
+  body.appendChild(adv);
+
+  if (!plugState.extensions.length) {
+    const es = el('div', 'empty-state'); es.appendChild(icon('i-plugin'));
+    es.appendChild(el('span', null, 'Keine Erweiterungen geladen. Tipp: entpacke eine Erweiterung (z. B. aus dem Chrome Web Store via .crx) und wähle ihren Ordner.'));
+    body.appendChild(es); return;
+  }
+  for (const ex of plugState.extensions) {
+    const row = el('div', 'us-row');
+    const sw = el('label', 'switch');
+    const inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = ex.enabled !== false;
+    inp.addEventListener('change', async () => { plugState.extensions = await window.nova.plugins.toggleExtension({ id: ex.id, on: inp.checked }); paintPlugins(); });
+    sw.appendChild(inp); sw.appendChild(el('i'));
+    const info = el('div', 'us-info');
+    info.appendChild(el('b', null, ex.name || 'Erweiterung'));
+    info.appendChild(el('span', null, ex.error ? '⚠ ' + ex.error : (ex.version ? 'v' + ex.version + ' · ' : '') + ex.path));
+    const del = el('button', 'icon-btn slim'); del.title = 'Entfernen'; del.appendChild(icon('i-trash-sm'));
+    del.addEventListener('click', async () => { plugState.extensions = await window.nova.plugins.removeExtension(ex.id); paintPlugins(); });
+    row.append(sw, info, del);
+    body.appendChild(row);
+  }
+}
+
 function renderSettings() {
   const s = state.settings;
   const body = $('#settings-body');
@@ -1970,6 +2230,8 @@ function renderSettings() {
   const gBe = group('Verhalten');
   const beCard = el('div', 'set-card');
   beCard.appendChild(switchRow('Sitzung wiederherstellen', 'Beim Start die Tabs & Spaces der letzten Sitzung öffnen', 'restoreSession'));
+  beCard.appendChild(switchRow('Tabs automatisch pausieren', 'Inaktive Hintergrund-Tabs nach einiger Zeit entladen — spart deutlich Arbeitsspeicher (Tab lädt beim Anklicken neu)', 'tabSuspend'));
+  beCard.appendChild(rangeRow('Pausieren nach', 'Inaktivität bis ein Tab pausiert wird', 'tabSuspendMin', 2, 60, 1, (v) => v + ' min'));
   gBe.appendChild(beCard);
 
   // Favoriten
@@ -2057,6 +2319,7 @@ function paletteCommands() {
     { label: 'Verlauf öffnen', ic: 'i-clock', run: () => openHub('history') },
     { label: 'Downloads öffnen', ic: 'i-download', run: () => openHub('downloads') },
     { label: 'Einstellungen öffnen', ic: 'i-gear', run: () => openHub('settings') },
+    { label: 'Plugin-Store öffnen', ic: 'i-plugin', run: () => openHub('plugins') },
     { label: 'Adblock umschalten', ic: 'i-shield', run: async () => {
         await window.nova.settings.set({ adblockEnabled: !state.settings.adblockEnabled });
         toast(state.settings.adblockEnabled ? 'Adblock aktiviert' : 'Adblock deaktiviert', 'i-shield');
@@ -2212,6 +2475,7 @@ $('#cheats').addEventListener('mousedown', (e) => { if (e.target === $('#cheats'
 function toggleSidebar() {
   const collapsed = $('#app').classList.toggle('sb-collapsed');
   window.nova.settings.set({ sidebarCollapsed: collapsed });
+  setTimeout(() => { if (typeof claude !== 'undefined') claude.relayout(); }, 320);
 }
 $('#bm-head').addEventListener('click', () => {
   const collapsed = $('#sidebar').classList.toggle('bm-collapsed');
@@ -2241,6 +2505,7 @@ $('#btn-cheats').addEventListener('click', openCheats);
 $('#btn-history').addEventListener('click', () => openHub('history'));
 $('#btn-downloads').addEventListener('click', () => openHub('downloads'));
 $('#btn-settings').addEventListener('click', () => openHub('settings'));
+$('#btn-plugins').addEventListener('click', () => openHub('plugins'));
 $('#btn-close-all-tabs').addEventListener('click', closeAllTabsInSpace);
 $('#win-min').addEventListener('click', () => window.nova.win.min());
 $('#win-max').addEventListener('click', () => window.nova.win.max());
@@ -2255,6 +2520,7 @@ document.addEventListener('mousedown', (e) => {
   if (!e.target.closest('#shield-pop') && !e.target.closest('#btn-shield')) $('#shield-pop').classList.add('hidden');
   if (!e.target.closest('#ctx-menu')) hideCtxMenu();
   if (!e.target.closest('#space-edit') && !e.target.closest('.space-chip')) closeSpaceEditor();
+  if (!e.target.closest('#ext-popup') && !e.target.closest('.ext-tool')) extActions.closePopup();
 });
 // Klick in eine Webview (native Ebene → kein DOM-mousedown) schließt alle offenen Menüs
 function closeAllTopMenus() {
@@ -2267,6 +2533,7 @@ function closeAllTopMenus() {
   if (typeof netPop !== 'undefined') netPop.close();
   if (typeof teEdit !== 'undefined') teEdit.close();
   if (typeof bmSave !== 'undefined') bmSave.close();
+  if (typeof extActions !== 'undefined') extActions.closePopup();
 }
 document.addEventListener('focusin', () => {
   if (document.activeElement?.tagName === 'WEBVIEW') closeAllTopMenus();
@@ -2352,8 +2619,21 @@ window.nova.adblock.onStats(({ total, perTab }) => {
 window.nova.settings.onChanged((s) => {
   state.settings = s;
   applyAccent();
+  pushAccentToNewtabs();
   syncShieldBadge();
 });
+
+// Akzentfarbe live an alle offenen Startseiten (nova://newtab) schicken,
+// damit sich Universum-Animation & Co. sofort umfärben (ohne Neuladen).
+function pushAccentToNewtabs() {
+  const payload = { accent: state.settings.accent || 'magenta', customAccent: state.settings.customAccent || null };
+  for (const t of state.tabs) {
+    const url = t.pendingUrl || t.url;
+    if (isInternal(url) && t.wcId != null) {
+      try { t.wv.send('newtab:accent', payload); } catch {}
+    }
+  }
+}
 
 window.nova.bookmarks.onChanged((tree) => {
   state.bookmarks = tree;
@@ -2791,37 +3071,62 @@ const music = (() => {
   // Lautstärke-Enforcer in den Musik-Webview injizieren: setzt die Lautstärke
   // aller Audio-/Video-Elemente NUR in diesem Webview (unabhängig vom restlichen
   // Browser-Sound). Ein Intervall hält den Wert auch bei neuen Elementen.
-  function volumeScript(vol01) {
+  // Lautstärke 0..3 (0–300 %). Bis 100 % über element.volume (sicher); über 100 %
+  // via Web-Audio-GainNode (Verstärkung). Streaming nutzt blob/MSE (same-origin),
+  // daher funktioniert die Gain-Verschaltung ohne Stummschaltung.
+  function volumeScript(vol) {
     return `(function(){
-      window.__novaVol = ${vol01};
-      var apply = function(){
-        try {
-          document.querySelectorAll('video,audio').forEach(function(e){
-            if (Math.abs((e.volume||0) - window.__novaVol) > 0.005) { try { e.volume = window.__novaVol; } catch(_){} }
-            if (window.__novaVol === 0) { e.muted = true; } else if (e.muted && e.dataset.novaUnmute !== '0') { e.muted = false; }
-          });
-        } catch(_){}
-      };
-      apply();
-      if (!window.__novaVolTimer) {
-        window.__novaVolTimer = setInterval(apply, 400);
-        new MutationObserver(apply).observe(document.documentElement, { childList: true, subtree: true });
-      }
+      try {
+        window.__novaVol = ${vol};
+        var engage = window.__novaVol > 1.0001 || window.__novaWA;
+        var apply = function(){
+          try {
+            var els = document.querySelectorAll('video,audio');
+            if (engage) {
+              if (!window.__novaAC) { try { window.__novaAC = new (window.AudioContext||window.webkitAudioContext)(); } catch(_){ return; } }
+              var ac = window.__novaAC; window.__novaWA = true;
+              if (!window.__novaNodes) window.__novaNodes = new WeakMap();
+              els.forEach(function(e){
+                var n = window.__novaNodes.get(e);
+                if (!n) { try { var s = ac.createMediaElementSource(e); var g = ac.createGain(); s.connect(g); g.connect(ac.destination); n = { g: g }; window.__novaNodes.set(e, n); } catch(_){ return; } }
+                try { n.g.gain.value = window.__novaVol; } catch(_){}
+                try { e.volume = 1; } catch(_){}
+                if (window.__novaVol === 0) e.muted = true; else if (e.muted && e.dataset.novaUnmute !== '0') e.muted = false;
+              });
+              if (ac.state === 'suspended') ac.resume().catch(function(){});
+            } else {
+              els.forEach(function(e){
+                var t = Math.min(1, window.__novaVol);
+                if (Math.abs((e.volume||0) - t) > 0.005) { try { e.volume = t; } catch(_){} }
+                if (window.__novaVol === 0) e.muted = true; else if (e.muted && e.dataset.novaUnmute !== '0') e.muted = false;
+              });
+            }
+          } catch(_){}
+        };
+        apply();
+        if (!window.__novaVolTimer) {
+          window.__novaVolTimer = setInterval(apply, 500);
+          try { new MutationObserver(apply).observe(document.documentElement, { childList: true, subtree: true }); } catch(_){}
+        }
+      } catch(_){}
     })();`;
   }
   function pushVolume() {
-    const v = muted ? 0 : Math.max(0, Math.min(1, volume / 100));
+    const v = muted ? 0 : Math.max(0, volume / 100); // 0..3
     for (const x of Object.values(views)) {
       try { x.wv.executeJavaScript(volumeScript(v), true).catch(() => {}); } catch {}
     }
-    // UI
+    // UI — Füllung relativ zum Maximum (300 %), Boost-Zustand über 100 %
+    const disp = muted ? 0 : volume;
     const slider = $('#music-vol');
-    slider.style.setProperty('--vol', (muted ? 0 : volume) + '%');
-    $('#music-vol-val').textContent = (muted ? 0 : volume) + '%';
-    $('#music-foot') && null;
+    if (+slider.value !== volume) slider.value = volume;
+    slider.style.setProperty('--vol', (disp / 300 * 100) + '%');
+    $('#music-vol-val').textContent = disp + '%';
     $('#music-vol-btn').innerHTML = '';
     $('#music-vol-btn').appendChild(icon(muted || volume === 0 ? 'i-mute' : 'i-audio'));
-    document.querySelector('.music-foot')?.classList.toggle('muted', muted || volume === 0);
+    const foot = document.querySelector('.music-foot');
+    foot?.classList.toggle('muted', muted || volume === 0);
+    foot?.classList.toggle('boosting', !muted && volume > 100);
   }
 
   function ensureView(svc) {
@@ -3003,7 +3308,7 @@ const music = (() => {
     // Tiefe Suche inkl. Shadow-DOM (Apple Music kapselt die Steuerung in Shadow-Roots)
     function deepQuery(sels){
       var stack=[document];var guard=0;
-      while(stack.length&&guard++<4000){
+      while(stack.length&&guard++<30000){
         var root=stack.shift();
         for(var i=0;i<sels.length;i++){try{var el=root.querySelector(sels[i]);if(el)return el;}catch(e){}}
         var all;try{all=root.querySelectorAll('*');}catch(e){continue;}
@@ -3011,8 +3316,24 @@ const music = (() => {
       }
       return null;
     }
-    function fire(el){ ['pointerover','pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t){ try{ el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); }catch(e){} }); }
+    function fire(el){ ['pointerover','pointerenter','pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t){ try{ el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window})); }catch(e){} }); try{ el.click(); }catch(e){} }
     function clickDeep(sels){var el=deepQuery(sels);if(el){fire(el);return true;}return false;}
+    // Positions-basiert (robust gegen Label-/Selektor-Änderungen): Play/Pause finden,
+    // dann den Transport-Nachbarn klicken (Spul-Buttons werden ausgeschlossen).
+    function transportNeighbor(dir){
+      var pp=deepQuery(['[data-testid="control-button-playpause"]','[data-testid="playback-controls__play-pause"]','button.web-chrome-playback-controls__playback-btn','button[aria-label="Pause"]','button[aria-label="Play"]','button[aria-label="Wiedergabe"]','button[aria-label="Pausieren"]','button[aria-label="Abspielen"]','button[aria-label="Anhalten"]']);
+      if(!pp)return false;
+      var row=pp.parentElement,hop=0;
+      // bis zu 3 Ebenen hoch, bis mehrere Transport-Buttons im Container liegen
+      while(row&&hop++<3){ var c=row.querySelectorAll('button,[role="button"]'); if(c&&c.length>=2)break; row=row.parentElement; }
+      if(!row)return false;
+      var all=[];var list=row.querySelectorAll('button,[role="button"]');
+      for(var i=0;i<list.length;i++){var b=list[i];var l=((b.getAttribute&&(b.getAttribute('aria-label')||b.getAttribute('title')))||'').trim();if(!SEEK.test(l))all.push(b);}
+      var idx=all.indexOf(pp); if(idx<0)return false;
+      var t=dir==='next'?all[idx+1]:all[idx-1];
+      if(t){fire(t);return true;}
+      return false;
+    }
     // Tiefe Suche nach Button per Label (inc treffen, exc ausschließen — verhindert,
     // dass Vor-/Zurückspulen-Buttons („Skip Forward 15s") statt Titelwechsel klicken).
     function clickByLabel(inc, exc){
@@ -3034,12 +3355,15 @@ const music = (() => {
       if(host.indexOf('apple')>=0){ if(clickByLabel(/^(play|pause|wiedergabe|pausieren|abspielen)$/i)) return true; }
       if(m){m.paused?m.play():m.pause();return true;}
     }else if(A==='next'){
-      if(clickDeep(['[data-testid="control-button-skip-forward"]','button.web-chrome-playback-controls__next','[data-testid="playback-controls__skip-next"]','button[aria-label="Nächster Titel"]','button[aria-label="Next"]','button[aria-label="Weiter"]','button[aria-label="Play Next"]','button[aria-label="Next track"]']))return true;
+      if(clickDeep(['[data-testid="control-button-skip-forward"]','button.web-chrome-playback-controls__next','[data-testid="playback-controls__skip-next"]','ytmusic-player-bar .next-button','tp-yt-paper-icon-button.next-button','.skipControl__next','button[aria-label="Nächster Titel"]','button[aria-label="Next"]','button[aria-label="Weiter"]','button[aria-label="Play Next"]','button[aria-label="Next track"]','button[aria-label="Nächsten Titel abspielen"]','button[aria-label="Vorspulen zum nächsten Titel"]']))return true;
       // strikt: nur echte „nächster Titel"-Beschriftungen, KEINE Spul-Buttons
-      return clickByLabel(/^(n(ä|ae)chster titel|next( track)?|weiter|n(ä|ae)chstes)$/i, SEEK);
+      if(clickByLabel(/^(n(ä|ae)chster titel|next( track| song)?|weiter|n(ä|ae)chstes|n(ä|ae)chsten titel( abspielen)?)$/i, SEEK))return true;
+      // robuster Positions-Fallback (v.a. Apple Music)
+      return transportNeighbor('next');
     }else if(A==='prev'){
-      if(clickDeep(['[data-testid="control-button-skip-back"]','button.web-chrome-playback-controls__previous','[data-testid="playback-controls__skip-previous"]','button[aria-label="Vorheriger Titel"]','button[aria-label="Previous"]','button[aria-label="Zurück"]','button[aria-label="Play Previous"]','button[aria-label="Previous track"]']))return true;
-      return clickByLabel(/^(vorheriger titel|previous( track)?|zur(ü|ue)ck|vorheriges)$/i, SEEK);
+      if(clickDeep(['[data-testid="control-button-skip-back"]','button.web-chrome-playback-controls__previous','[data-testid="playback-controls__skip-previous"]','ytmusic-player-bar .previous-button','tp-yt-paper-icon-button.previous-button','.skipControl__previous','.playControls__prev','button[aria-label="Vorheriger Titel"]','button[aria-label="Previous"]','button[aria-label="Zurück"]','button[aria-label="Play Previous"]','button[aria-label="Previous track"]','button[aria-label="Vorherigen Titel abspielen"]']))return true;
+      if(clickByLabel(/^(vorheriger titel|previous( track| song)?|zur(ü|ue)ck|vorheriges|vorherigen titel( abspielen)?)$/i, SEEK))return true;
+      return transportNeighbor('prev');
     }
     return false;}catch(e){return false;}})()`;
 
@@ -3083,17 +3407,22 @@ const music = (() => {
     const v = npView || (current && views[current] && views[current].wv);
     if (!v) return;
     let host = ''; try { host = new URL(v.getURL()).hostname; } catch {}
-    const isApple = host.indexOf('apple') >= 0;
-    if (action === 'playpause') {
-      try { await v.executeJavaScript(cmdScript('playpause'), true); } catch {}
-    } else if (isApple) {
-      // Apple Music: Medientaste wirkt nicht → Steuer-Buttons im Shadow-DOM klicken
+    const isApple = /(^|\.)music\.apple\.com$/.test(host) || host.indexOf('apple') >= 0;
+    if (isApple && action !== 'playpause') {
+      // Apple Music reagiert NICHT zuverlässig auf DOM-Klicks/synthetische Tasten, aber auf die
+      // echten Multimedia-Tasten der Tastatur → exakt die auf Systemebene auslösen.
+      window.nova.music.hwMediaKey(action);
+      // zusätzlich den DOM-Versuch (schadet nicht, hilft falls hw nicht greift)
       try { await v.executeJavaScript(cmdScript(action), true); } catch {}
     } else {
-      // Spotify & Co: echte Medientaste → löst MediaSession-Handler aus
-      let wcId = null; try { wcId = v.getWebContentsId(); } catch {}
-      if (wcId) window.nova.music.mediaKey({ wcId, key: action === 'next' ? 'MediaNextTrack' : 'MediaPreviousTrack' });
-      else { try { await v.executeJavaScript(cmdScript(action), true); } catch {} }
+      // Spotify & Co: echten DOM-Button klicken (zuverlässig), Medientaste nur Fallback
+      let ok = false;
+      try { ok = await v.executeJavaScript(cmdScript(action), true); } catch {}
+      if (!ok && action !== 'playpause') {
+        let wcId = null; try { wcId = v.getWebContentsId(); } catch {}
+        if (wcId) window.nova.music.mediaKey({ wcId, key: action === 'next' ? 'MediaNextTrack' : 'MediaPreviousTrack' });
+        else window.nova.music.hwMediaKey(action);
+      }
     }
     setTimeout(pollNowPlaying, 350);
     setTimeout(pollNowPlaying, 1100);
@@ -3108,6 +3437,432 @@ const music = (() => {
   // Bei Fenstergrößenänderung die Player-Webviews mitskalieren
   window.addEventListener('resize', () => { if (open) sizeViews(); });
   return { toggle, show, applySettings, checkDrm, pollNowPlaying };
+})();
+
+/* ============================================================ Claude (NOVA AI) */
+// Schritt 1 — Fundament: claude.ai eingebettet, Login bleibt erhalten (eigene
+// persistente Session, kein API-Key). Agent-Browsing/Coding bauen darauf auf.
+const claude = (() => {
+  const PART = 'persist:nova-claude';
+  const panel = $('#claude-panel');
+  const body = $('#claude-body');
+  let wv = null, open = false;
+
+  // ---- Andocken / Quick-Snap ----
+  let dock = 'float';            // float | left | right | split-left | split-right
+  let floatPos = null;          // {left, top, width, height}
+  const DOCK_W = 400, GAP = 10;
+  const preview = el('div', 'snap-preview hidden');
+  document.body.appendChild(preview);
+  const va = () => $('#view-area');
+  const contentRect = () => va().getBoundingClientRect();
+  const DOCK_CLASSES = ['cl-left', 'cl-right', 'cl-split-left', 'cl-split-right', 'cl-float'];
+
+  // Zielrechteck einer Snap-Zone (für Panel-Position UND Vorschau)
+  // Andock-Zonen: links / rechts / split-links / split-rechts (kein "unten" – ergibt keinen Sinn)
+  function rectForZone(zone) {
+    const r = contentRect();
+    if (zone === 'left') return { left: r.left, top: r.top, width: DOCK_W, height: r.height };
+    if (zone === 'right') return { left: r.right - DOCK_W, top: r.top, width: DOCK_W, height: r.height };
+    if (zone === 'split-left') { const w = r.width / 2 - GAP / 2; return { left: r.left, top: r.top, width: w, height: r.height }; }
+    if (zone === 'split-right') { const w = r.width / 2 - GAP / 2; return { left: r.right - w, top: r.top, width: w, height: r.height }; }
+    return null;
+  }
+  // Snap-Zone für eine Cursor-Position bestimmen
+  function zoneFor(x, y) {
+    const r = contentRect();
+    if (x < r.left || x > r.right || y < r.top || y > r.bottom) return 'float';
+    const rx = (x - r.left) / r.width;
+    if (rx < 0.12) return 'left';
+    if (rx > 0.88) return 'right';
+    if (rx > 0.30 && rx < 0.70) return rx < 0.5 ? 'split-left' : 'split-right';
+    return 'float';
+  }
+  function showPreview(zone) {
+    const rc = rectForZone(zone);
+    if (!rc) { preview.classList.add('hidden'); return; }
+    preview.style.left = rc.left + 'px'; preview.style.top = rc.top + 'px';
+    preview.style.width = rc.width + 'px'; preview.style.height = rc.height + 'px';
+    preview.classList.remove('hidden');
+  }
+
+  // Panel + Web-Inhalt entsprechend des Andock-Modus platzieren
+  function layoutDock() {
+    DOCK_CLASSES.forEach((c) => document.body.classList.remove(c));
+    const v = va();
+    v.style.paddingLeft = v.style.paddingRight = v.style.paddingBottom = '';
+    if (!open) return;
+    const setPanel = (l, t, w, h) => {
+      panel.style.left = l + 'px'; panel.style.top = t + 'px';
+      panel.style.width = w + 'px'; panel.style.height = h + 'px';
+      panel.style.right = 'auto'; panel.style.bottom = 'auto';
+    };
+    if (dock === 'float') {
+      document.body.classList.add('cl-float');
+      const r = contentRect();
+      const fp = floatPos || { left: r.left + 14, top: r.top + 14, width: 440, height: Math.min(700, r.height - 28) };
+      setPanel(fp.left, fp.top, fp.width, fp.height);
+    } else {
+      const rc = rectForZone(dock);
+      if (!rc) { dock = 'right'; layoutDock(); return; }   // unbekannter/alter Modus (z.B. "bottom") → rechts
+      document.body.classList.add('cl-' + dock);
+      setPanel(rc.left, rc.top, rc.width, rc.height);
+      if (dock === 'left') v.style.paddingLeft = (DOCK_W + GAP) + 'px';
+      else if (dock === 'right') v.style.paddingRight = (DOCK_W + GAP) + 'px';
+      else if (dock === 'split-left') v.style.paddingLeft = (rc.width + GAP) + 'px';
+      else if (dock === 'split-right') v.style.paddingRight = (rc.width + GAP) + 'px';
+    }
+    repaint();   // Zoom folgt zusätzlich automatisch dem ResizeObserver auf #claude-body
+  }
+  function setDock(mode) {
+    if (mode === 'bottom') mode = 'right';   // "unten" wurde entfernt
+    dock = mode; window.nova.settings.set({ claudeDock: mode }); layoutDock();
+  }
+
+  function ensureView() {
+    if (wv) return wv;
+    const loading = el('div', 'claude-loading');
+    loading.appendChild(el('div', 'ms-spin'));
+    loading.appendChild(el('span', null, 'Claude wird geladen … melde dich mit deinem Account an.'));
+    wv = document.createElement('webview');
+    wv.setAttribute('partition', PART);
+    wv.setAttribute('allowpopups', '');
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no');
+    wv.setAttribute('src', 'https://claude.ai/new');
+    wv.addEventListener('did-stop-loading', () => { loading.style.display = 'none'; repaint(); });
+    wv.addEventListener('dom-ready', repaint);
+    body.append(loading, wv);
+    // Zoom an die TATSÄCHLICHE Body-Breite koppeln — feuert während der gesamten
+    // Dock-Animation und am Ende, also auch bei mehrfachem Umdocken immer korrekt.
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => applyClaudeZoom());
+      ro.observe(body);
+    }
+    return wv;
+  }
+  // claude.ai an die Panel-Breite anpassen: schmale Docks zoomen raus, damit das
+  // Layout passt statt riesig/abgeschnitten zu wirken (wie der Spotify-Trick).
+  // Liest IMMER die echte aktuelle Body-Breite — wird vom ResizeObserver getrieben,
+  // daher keine Timing-/Stale-Breite-Probleme mehr beim mehrfachen Umdocken.
+  function applyClaudeZoom() {
+    if (!wv) return;
+    const w = body.clientWidth;
+    if (!w) return;
+    const z = Math.max(0.55, Math.min(1, w / 640));
+    try { if (Math.abs((wv.getZoomFactor ? wv.getZoomFactor() : 0) - z) > 0.001) wv.setZoomFactor(z); } catch { try { wv.setZoomFactor(z); } catch {} }
+  }
+  // Electron-Compositing-Fix (schwarzer Bereich) — Höhe kurz anstoßen, dann zurück auf CSS 100%.
+  // KEINE feste Pixel-Breite mehr setzen: das Webview bleibt per CSS width:100% an der Panel-
+  // Breite kleben → es kann sich nicht mehr eine alte (zu schmale) Breite „merken".
+  function repaint() {
+    if (!wv) return;
+    requestAnimationFrame(() => {
+      const h = body.clientHeight;
+      if (!h) return;
+      wv.style.width = ''; wv.style.height = (h - 1) + 'px';
+      applyClaudeZoom();
+      requestAnimationFrame(() => { wv.style.height = ''; applyClaudeZoom(); });
+    });
+  }
+  let agentOn = false;
+  function toggle(force) {
+    open = force != null ? force : !open;
+    panel.classList.toggle('hidden', !open);
+    $('#btn-claude').classList.toggle('btn-claude-active', open);
+    if (open) { ensureView(); layoutDock(); setTimeout(repaint, 380); }
+    else { layoutDock(); if (agentOn) setAgent(false); }
+  }
+  function close() { toggle(false); }
+
+  // ---- Agent-Modus: Werkzeugleiste ein, Standard-Andock rechts ----
+  function setAgent(on) {
+    agentOn = on;
+    document.body.classList.toggle('agent-on', on);
+    $('#claude-agentbar').classList.toggle('hidden', !on);
+    $('#claude-agent').classList.toggle('active-tool', on);
+    if (on) {
+      if (!open) toggle(true);
+      if (dock === 'float') setDock('right');   // beim Start sinnvoll rechts andocken
+      const sp = currentSpace && currentSpace();
+      if (sp && sp.splitTabId) { sp.splitTabId = null; updateWebviewLayout(); syncTabActiveClasses(); }
+      caLog('Agent-Modus aktiv — öffne eine Seite und sende sie an Claude');
+    }
+    setTimeout(() => { layoutDock(); repaint(); }, 320);
+  }
+
+  function caLog(msg, warn) {
+    const log = $('#ca-log');
+    const row = el('div', 'ca-log-row' + (warn ? ' warn' : ''));
+    row.appendChild(el('span', 'ca-dot'));
+    row.appendChild(el('span', null, msg));
+    log.appendChild(row);
+    while (log.childElementCount > 6) log.firstChild.remove();
+    log.scrollTop = log.scrollHeight;
+  }
+
+  const EXTRACT = `(function(){try{
+    function c(t){return (t||'').replace(/\\s+/g,' ').trim();}
+    var main = document.querySelector('main,article,[role="main"]') || document.body;
+    return { title: document.title||'', url: location.href||'', text: c(main.innerText).slice(0,6000) };
+  }catch(e){ return { title:'', url:(location&&location.href)||'', text:'' }; }})()`;
+
+  function injectScript(message) {
+    return `(function(){try{
+      var ed = document.querySelector('div.ProseMirror[contenteditable="true"]') || document.querySelector('[contenteditable="true"]') || document.querySelector('textarea');
+      if(!ed) return 'noeditor';
+      ed.focus();
+      var msg = ${JSON.stringify(message)};
+      if (ed.tagName==='TEXTAREA'){ ed.value = msg; ed.dispatchEvent(new Event('input',{bubbles:true})); }
+      else { try { document.execCommand('selectAll',false,null); document.execCommand('insertText',false,msg); } catch(e){} }
+      setTimeout(function(){
+        var b = document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Nachricht senden"]')||document.querySelector('button[data-testid="send-button"]')||document.querySelector('fieldset button[type="submit"]');
+        if(b) b.click();
+      }, 180);
+      return 'ok';
+    }catch(e){ return 'err'; }})()`;
+  }
+
+  const PROMPTS = {
+    summary: 'Fasse den Inhalt dieser Webseite klar und strukturiert zusammen.',
+    explain: 'Erkläre den Inhalt dieser Seite einfach und verständlich.',
+    sources: 'Bewerte diese Seite kritisch: Wie glaubwürdig sind Inhalt und Quellen?',
+    key: 'Liste die wichtigsten Kernpunkte dieser Seite als kompakte Stichpunkte.',
+  };
+
+  async function sendToClaude(promptText) {
+    const tab = activeTab();
+    if (!tab || !tab.wv || !isWebUrl(tab.url)) { caLog('Keine Webseite aktiv — öffne erst eine Seite', true); return; }
+    if (!open) toggle(true);
+    caLog('Lese aktuelle Seite …');
+    let page = null;
+    try { page = await tab.wv.executeJavaScript(EXTRACT, true); } catch {}
+    if (!page || !page.text) { caLog('Seiteninhalt konnte nicht gelesen werden', true); return; }
+    const message = `${promptText}\n\nSeite: ${page.title} (${page.url})\n\n"""\n${page.text}\n"""`;
+    caLog(`Seite gelesen (${page.text.length} Zeichen)`);
+    // Fallback: in die Zwischenablage, falls die Einschleusung scheitert
+    try { await navigator.clipboard.writeText(message); } catch {}
+    let res = 'err';
+    try { res = await wv.executeJavaScript(injectScript(message), true); } catch {}
+    if (res === 'ok') caLog('An Claude gesendet ✓');
+    else if (res === 'noeditor') caLog('Bitte zuerst in Claude anmelden — Text liegt in der Zwischenablage', true);
+    else caLog('Senden fehlgeschlagen — Text liegt in der Zwischenablage (einfügen)', true);
+  }
+
+  // ---- Schritt 3: autonome Recherche (experimentell, über claude.ai-DOM) ----
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const MAX_STEPS = 4;       // höchstens 4 Seiten öffnen, dann zwingend abschließen
+  let agentRunning = false;
+  let runId = 0;          // bricht alte Schleifen ab, falls neu gestartet wird
+  let lastUrl = '';       // gegen Endlosschleife: gleiche Seite nicht zweimal öffnen
+  // Liest Claudes letzte Nachricht aus mehreren Quellen, weil die gerenderte Prosa unzuverlässig
+  // ist (Auto-Umbruch zerreißt URLs, Keywords kleben an). codes = Inline-Code (<code>, VERBATIM,
+  // beste Quelle), hrefs = verlinkte URLs, raw = textContent (ohne Zero-Width), text = innerText (Stabilität).
+  const READ_REPLY = `(function(){try{
+    var nodes = document.querySelectorAll('div.font-claude-message');
+    if(!nodes.length) nodes = document.querySelectorAll('[data-testid="assistant-message"], .prose, [data-is-streaming]');
+    if(!nodes.length) return { ok:false, text:'', raw:'', hrefs:[], codes:[], n:0 };
+    var last = nodes[nodes.length-1];
+    var hrefs = [];
+    last.querySelectorAll('a[href]').forEach(function(a){ var h=a.getAttribute('href')||''; if(/^https?:\\/\\//i.test(h)) hrefs.push(h); });
+    var codes = [];
+    last.querySelectorAll('code').forEach(function(c){ var t=(c.textContent||'').replace(/[\\u200B-\\u200D\\uFEFF\\u00AD]/g,'').trim(); if(t) codes.push(t); });
+    return { ok:true, text:(last.innerText||'').trim(), raw:(last.textContent||'').replace(/[\\u200B-\\u200D\\uFEFF\\u00AD]/g,'').replace(/\\s+/g,' ').trim(), hrefs:hrefs, codes:codes, n: nodes.length };
+  }catch(e){ return { ok:false, text:'', raw:'', hrefs:[], codes:[], n:0 }; }})()`;
+
+  function setRunUI(on) {
+    $('#ca-stop').classList.toggle('hidden', !on);
+    $('#ca-research').classList.toggle('hidden', on);
+  }
+  function stopAgent() { agentRunning = false; setRunUI(false); }
+
+  // wartet, bis die nächste Claude-Nachricht steht und ihr Text 2x stabil ist; gibt das ganze Objekt zurück
+  async function waitForReply(minCount) {
+    let lastText = null, lastR = null, stable = 0;
+    for (let i = 0; i < 45 && agentRunning; i++) {
+      await sleep(1200);
+      let r = null; try { r = await wv.executeJavaScript(READ_REPLY, true); } catch {}
+      if (!r || !r.ok || r.n < minCount) continue;
+      lastR = r;
+      if (r.text && r.text === lastText) { if (++stable >= 2) return r; }
+      else { stable = 0; lastText = r.text; }
+    }
+    return lastR && lastR.text ? lastR : null;
+  }
+
+  // URL aus Claudes Antwort robust herauslesen. Jede Kandidaten-URL wird über den echten
+  // URL()-Parser validiert (echter Domain-Host nötig) — so wird kein eingeklebtes Keyword wie
+  // "...github.ÖFFNE:" oder eine abgeschnittene "https://github" jemals navigiert.
+  function sanitizeUrl(u) {
+    if (!u) return null;
+    u = u.replace(/[​-‍﻿­]/g, '').trim();
+    // nur erlaubte URL-Zeichen ab dem Protokoll → schneidet bei Nicht-ASCII (z.B. "Ö") sauber ab
+    const mm = /^https?:\/\/[A-Za-z0-9\-._~:/?#@!$&'()*+,;=%]+/.exec(u);
+    if (!mm) return null;
+    const s = mm[0].replace(/[)\]}>.,;:"']+$/, '');
+    try {
+      const x = new URL(s);
+      if (!/^[a-z0-9.-]+\.[a-z]{2,24}$/i.test(x.hostname)) return null;   // echter Domain-Host (Punkt + ASCII-TLD)
+      return x.href;
+    } catch { return null; }
+  }
+  function pickUrl(r) {
+    const notClaude = (s) => s && !/claude\.ai|anthropic\.com/i.test(s);
+    // 1) Inline-Code (verbatim — kein Auto-Link, kein Umbruch, kein wbr): zuverlässigste Quelle
+    for (const c of (r.codes || [])) { const s = sanitizeUrl(c); if (notClaude(s)) return s; }
+    // 2) echter Link-href in der Nachricht
+    for (const h of (r.hrefs || [])) { const s = sanitizeUrl(h); if (notClaude(s)) return s; }
+    // 3) explizite ÖFFNE-Zeile im reinen Text
+    const m = /(?:ÖFFNE|OEFFNE|OPEN)\s*:\s*(\S+)/i.exec(r.raw || '');
+    if (m) { const s = sanitizeUrl(m[1]); if (notClaude(s)) return s; }
+    // 4) irgendeine gültige URL im Text
+    const m2 = /(https?:\/\/\S+)/i.exec(r.raw || '');
+    if (m2) { const s = sanitizeUrl(m2[1]); if (notClaude(s)) return s; }
+    return null;
+  }
+
+  async function startResearch(goal) {
+    if (agentRunning) { caLog('Recherche läuft bereits — erst stoppen', true); return; }
+    if (!goal) { caLog('Bitte oben ein Recherche-Ziel eingeben', true); return; }
+    if (!open) toggle(true);
+    if (!agentOn) setAgent(true);
+    agentRunning = true; lastUrl = ''; const myRun = ++runId; setRunUI(true);
+    caLog('🔎 Recherche: ' + goal.slice(0, 56));
+    const instr = `Du bist der Recherche-Agent im NOVA-Browser. Forschungsziel: "${goal}".\n`
+      + `Sei MAXIMAL entscheidungsfreudig: In den allermeisten Fällen GENÜGT EINE EINZIGE Seite. Sobald die gelesene Seite das Ziel beantwortet, antworte SOFORT mit FERTIG.\n`
+      + `Öffne eine ZWEITE Seite nur, wenn die erste das Ziel klar NICHT beantwortet (absolutes Maximum ${MAX_STEPS} Seiten). Im Zweifel immer FERTIG statt noch eine Seite.\n`
+      + `WICHTIG: Schreibe jede URL in Backticks (Inline-Code), damit sie unverändert ankommt.\n`
+      + `Antworte mit GENAU EINER Zeile:\n`
+      + 'ÖFFNE: `https://...`   — nur wenn du wirklich noch eine Seite brauchst\n'
+      + `FERTIG: <kurzes Ergebnis>   — sobald du genug weißt (das ist der Normalfall)\n`
+      + 'Starte jetzt mit EINER ÖFFNE-Zeile für die eine Seite, die das Ziel am direktesten beantwortet (URL in Backticks).';
+    let prev = 0;
+    try { const r0 = await wv.executeJavaScript(READ_REPLY, true); prev = (r0 && r0.n) || 0; } catch {}
+    let inj = 'err';
+    try { inj = await wv.executeJavaScript(injectScript(instr), true); } catch {}
+    if (inj !== 'ok') { caLog('Konnte Claude nicht ansteuern — eingeloggt?', true); stopAgent(); return; }
+    agentLoop(prev + 1, 0, myRun);
+  }
+
+  async function agentLoop(minCount, step, myRun) {
+    if (!agentRunning || myRun !== runId) return;
+    if (step >= MAX_STEPS) { caLog('Schritt-Limit erreicht — gestoppt', true); stopAgent(); return; }
+    caLog(`Warte auf Claude … (Schritt ${step + 1}/${MAX_STEPS})`);
+    const reply = await waitForReply(minCount);
+    if (!agentRunning || myRun !== runId) return;
+    if (!reply) { caLog('Keine neue Antwort von Claude — gestoppt', true); stopAgent(); return; }
+    // FERTIG hat IMMER Vorrang → beendet die Recherche sofort (auch wenn noch eine URL im Text steht)
+    if (/FERTIG\s*:/i.test(reply.raw || reply.text || '')) { caLog('Claude ist fertig ✓ — Ergebnis steht im Chat'); stopAgent(); return; }
+    // URL robust + validiert lesen (Inline-Code → href → Text, alles über URL() geprüft)
+    const url = pickUrl(reply);
+    if (!url) {
+      // keine saubere URL gefunden → Claude um vollständigen Link in Backticks bitten (statt Garbage zu navigieren)
+      caLog('Keine saubere URL erkannt — bitte Claude um den vollständigen Link', true);
+      let pc2 = minCount;
+      try { const rr = await wv.executeJavaScript(READ_REPLY, true); pc2 = (rr && rr.n) || minCount; } catch {}
+      try { await wv.executeJavaScript(injectScript('Die letzte Antwort enthielt keine gültige URL. Schicke die nächste Seite als EINE Zeile mit der URL in Backticks:\nÖFFNE: `https://example.com/pfad`\nOder antworte mit FERTIG: <Ergebnis>.'), true); } catch {}
+      agentLoop(pc2 + 1, step + 1, myRun);
+      return;
+    }
+    if (url === lastUrl) { caLog('Gleiche Seite erneut angefragt — gestoppt', true); stopAgent(); return; }
+    lastUrl = url;
+    caLog('Öffne: ' + url.slice(0, 48));
+    const tab = activeTab();
+    navigate(tab, url);
+    await sleep(3800);
+    if (!agentRunning || myRun !== runId) return;
+    let page = null; try { page = await tab.wv.executeJavaScript(EXTRACT, true); } catch {}
+    caLog(page && page.text ? `Gelesen (${page.text.length} Z.) → zurück an Claude` : 'Seite nicht lesbar → melde an Claude', !(page && page.text));
+    const lastRound = step + 1 >= MAX_STEPS - 1;   // danach ist Schluss → Abschluss erzwingen
+    const tail = lastRound
+      ? '\n\nDas war die letzte Seite. Antworte JETZT mit "FERTIG: <Ergebnis>" — keine ÖFFNE-Zeile mehr.'
+      : '\n\nBeantwortet das schon das Ziel? Dann antworte JETZT mit "FERTIG: <Ergebnis>". Nur falls die Seite das Ziel klar NICHT beantwortet: eine weitere ÖFFNE-Zeile (URL in Backticks).';
+    const feed = page && page.text
+      ? `SEITE ${url}:\n"""\n${page.text}\n"""${tail}`
+      : `Die Seite ${url} ließ sich nicht lesen.${tail}`;
+    let pc = minCount;
+    try { const rr = await wv.executeJavaScript(READ_REPLY, true); pc = (rr && rr.n) || minCount; } catch {}
+    try { await wv.executeJavaScript(injectScript(feed), true); } catch {}
+    agentLoop(pc + 1, step + 1, myRun);
+  }
+
+  $('#btn-claude').addEventListener('click', () => toggle());
+  $('#claude-close').addEventListener('click', () => toggle(false));
+  $('#claude-reload').addEventListener('click', () => { if (wv) wv.reload(); });
+  $('#claude-popout').addEventListener('click', () => { createTab('https://claude.ai/new'); toggle(false); });
+  $('#claude-agent').addEventListener('click', () => setAgent(!agentOn));
+  for (const chip of document.querySelectorAll('.ca-chip')) {
+    chip.addEventListener('click', () => sendToClaude(PROMPTS[chip.dataset.prompt] || PROMPTS.summary));
+  }
+  const caSend = () => { const v = $('#ca-input').value.trim(); if (!v) return; $('#ca-input').value = ''; sendToClaude(v); };
+  $('#ca-send').addEventListener('click', caSend);
+  $('#ca-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') caSend(); });
+  $('#ca-research').addEventListener('click', () => { const v = $('#ca-input').value.trim(); $('#ca-input').value = ''; startResearch(v); });
+  $('#ca-stop').addEventListener('click', () => { stopAgent(); caLog('Recherche gestoppt'); });
+
+  // Breite per Ziehen anpassen — nur im freien (schwebenden) Modus
+  $('#claude-resize').addEventListener('mousedown', (e) => {
+    if (dock !== 'float') return;
+    e.preventDefault();
+    $('#drag-shield').classList.remove('hidden');
+    const startX = e.clientX, startW = panel.offsetWidth;
+    const onMove = (ev) => { panel.style.width = Math.min(820, Math.max(340, startW + (ev.clientX - startX))) + 'px'; repaint(); };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+      $('#drag-shield').classList.add('hidden');
+      floatPos = panel.getBoundingClientRect();
+      window.nova.settings.set({ claudeFloat: { left: floatPos.left, top: floatPos.top, width: panel.offsetWidth, height: floatPos.height } });
+      repaint();
+    };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  });
+
+  // ---- Header ziehen → frei verschieben + Quick-Snap (links/rechts/unten/Split) ----
+  $('.claude-head').addEventListener('mousedown', (e) => {
+    if (e.target.closest('button') || e.button !== 0) return;
+    e.preventDefault();
+    const startRect = panel.getBoundingClientRect();
+    const offX = e.clientX - startRect.left, offY = e.clientY - startRect.top;
+    // beim Ziehen immer als schwebendes Fenster bewegen
+    const fw = dock === 'float' ? startRect.width : 440;
+    const fh = dock === 'float' ? startRect.height : Math.min(700, contentRect().height - 28);
+    DOCK_CLASSES.forEach((c) => document.body.classList.remove(c));
+    document.body.classList.add('cl-float', 'cl-dragging');
+    const v = va(); v.style.paddingLeft = v.style.paddingRight = v.style.paddingBottom = '';
+    panel.style.width = fw + 'px'; panel.style.height = fh + 'px'; panel.style.right = 'auto'; panel.style.bottom = 'auto';
+    $('#drag-shield').classList.remove('hidden');
+    let zone = 'float';
+    const onMove = (ev) => {
+      panel.style.left = (ev.clientX - offX) + 'px';
+      panel.style.top = Math.max(48, ev.clientY - offY) + 'px';
+      zone = zoneFor(ev.clientX, ev.clientY);
+      showPreview(zone);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+      document.body.classList.remove('cl-dragging');
+      preview.classList.add('hidden');
+      $('#drag-shield').classList.add('hidden');
+      if (zone === 'float') {
+        const r = panel.getBoundingClientRect();
+        floatPos = { left: r.left, top: r.top, width: panel.offsetWidth, height: r.height };
+        dock = 'float';
+        window.nova.settings.set({ claudeDock: 'float', claudeFloat: floatPos });
+        layoutDock();
+      } else {
+        setDock(zone);
+      }
+    };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  });
+
+  window.addEventListener('resize', () => { if (open) layoutDock(); });
+  function relayout() { if (open) layoutDock(); }
+  function applySettings() {
+    if (state.settings.claudeFloat) floatPos = state.settings.claudeFloat;
+    if (state.settings.claudeDock) dock = state.settings.claudeDock;
+    if (dock === 'bottom') dock = 'right';   // alter Wert → "unten" gibt es nicht mehr
+  }
+  return { toggle, close, applySettings, relayout, setDock, isOpen: () => open };
 })();
 
 /* ============================================================ topbar popovers */
@@ -3404,22 +4159,28 @@ const teEdit = (() => {
   const pop = $('#topbar-edit');
   const list = $('#te-list');
   const TOOLS = [
-    ['music', 'i-music', 'Musik'], ['downloads', 'i-download', 'Downloads'], ['netmon', 'i-activity', 'Netzwerk-Monitor'],
-    ['screenshot', 'i-camera', 'Screenshot'], ['split', 'i-split', 'Split View'], ['shield', 'i-shield', 'NOVA Shield'],
-    ['palette', 'i-bolt', 'Befehlspalette'],
+    ['claude', 'i-claude', 'Claude (NOVA AI)'], ['music', 'i-music', 'Musik'], ['downloads', 'i-download', 'Downloads'],
+    ['netmon', 'i-activity', 'Netzwerk-Monitor'], ['screenshot', 'i-camera', 'Screenshot'], ['split', 'i-split', 'Split View'],
+    ['shield', 'i-shield', 'NOVA Shield'], ['plugins', 'i-plugin', 'Plugin-Store'], ['palette', 'i-bolt', 'Befehlspalette'],
   ];
   let openFlag = false;
+  let extList = [];   // aktuell geladene Erweiterungs-Actions (von extActions gesetzt)
 
   function visible() {
     const t = state.settings.topbarTools;
     return Array.isArray(t) ? t : TOOLS.map((x) => x[0]);
   }
+  function hiddenExt() { return new Set(state.settings.topbarExtHidden || []); }
   function apply() {
     const vis = new Set(visible());
+    const hidden = hiddenExt();
     for (const btn of document.querySelectorAll('.topbar-tool')) {
-      btn.classList.toggle('hidden', !vis.has(btn.dataset.tool));
+      const t = btn.dataset.tool || '';
+      if (t.startsWith('ext:')) btn.classList.toggle('hidden', hidden.has(t.slice(4)));
+      else btn.classList.toggle('hidden', !vis.has(t));
     }
   }
+  function setExtList(list) { extList = list || []; }
   function toggle(force) {
     openFlag = force != null ? force : !openFlag;
     if (openFlag) { render(); positionPop(pop, $('#btn-edit-topbar')); }
@@ -3448,8 +4209,90 @@ const teEdit = (() => {
       row.append(sw);
       list.appendChild(row);
     }
+    // Erweiterungs-Toolbar-Icons (falls vorhanden)
+    if (extList.length) {
+      list.appendChild(el('div', 'te-sep', 'Erweiterungen'));
+      const hidden = hiddenExt();
+      for (const a of extList) {
+        const row = el('div', 'te-row');
+        if (a.icon) { const img = el('img', 'te-ext-ico'); img.src = a.icon; row.appendChild(img); }
+        else row.appendChild(icon('i-plugin'));
+        row.appendChild(el('span', null, a.name));
+        const sw = el('label', 'switch');
+        const inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !hidden.has(a.id);
+        inp.addEventListener('change', () => {
+          const cur = hiddenExt();
+          inp.checked ? cur.delete(a.id) : cur.add(a.id);
+          const arr = [...cur];
+          state.settings.topbarExtHidden = arr;
+          window.nova.settings.set({ topbarExtHidden: arr });
+          apply();
+        });
+        sw.appendChild(inp); sw.appendChild(el('i'));
+        row.append(sw);
+        list.appendChild(row);
+      }
+    }
   }
-  return { toggle, close, apply };
+  return { toggle, close, apply, setExtList };
+})();
+
+/* ---- Erweiterungs-Toolbar-Icons (browser actions) ---- */
+const extActions = (() => {
+  const wrap = $('#ext-actions');
+  const pop = $('#ext-popup');
+  const body = $('#ext-pop-body');
+  let current = null;
+
+  async function refresh() {
+    let acts = [];
+    try { acts = await window.nova.plugins.actions(); } catch {}
+    wrap.innerHTML = '';
+    for (const a of acts) {
+      const btn = el('button', 'icon-btn topbar-tool ext-tool');
+      btn.dataset.tool = 'ext:' + a.id;
+      btn.title = a.title || a.name;
+      if (a.icon) { const img = el('img', 'ext-ico'); img.src = a.icon; img.alt = ''; btn.appendChild(img); }
+      else btn.appendChild(icon('i-plugin'));
+      btn.addEventListener('click', (e) => { e.stopPropagation(); openPopup(a, btn); });
+      wrap.appendChild(btn);
+    }
+    if (typeof teEdit !== 'undefined') { teEdit.setExtList(acts); teEdit.apply(); }
+  }
+
+  function openPopup(a, btn) {
+    const wasOpen = current === a.id && !pop.classList.contains('hidden');
+    closePopup();
+    if (wasOpen) return;
+    if (!a.popup) { toast((a.name || 'Erweiterung') + ' hat kein Popup-Fenster', 'i-info'); return; }
+    current = a.id;
+    $('#ext-pop-title').textContent = a.name;
+    const wv = document.createElement('webview');
+    wv.setAttribute('partition', PARTITION);
+    wv.setAttribute('src', a.popup);
+    wv.setAttribute('allowpopups', '');
+    wv.style.width = '360px'; wv.style.height = '480px';
+    wv.addEventListener('dom-ready', () => {
+      wv.executeJavaScript('({w:Math.max(document.body.scrollWidth,document.documentElement.scrollWidth),h:Math.max(document.body.scrollHeight,document.documentElement.scrollHeight)})', true)
+        .then((d) => { if (d && d.w) { wv.style.width = Math.min(780, Math.max(240, d.w)) + 'px'; wv.style.height = Math.min(620, Math.max(120, d.h + 4)) + 'px'; positionPop(pop, btn); } })
+        .catch(() => {});
+    });
+    body.innerHTML = ''; body.appendChild(wv);
+    pop.classList.remove('hidden');
+    positionPop(pop, btn);
+  }
+  function closePopup() { pop.classList.add('hidden'); body.innerHTML = ''; current = null; }
+
+  $('#ext-pop-close').addEventListener('click', closePopup);
+  window.nova.plugins.onActionsChanged(() => refresh());
+  // Rückmeldung, wenn von einer Store-Seite aus installiert wurde
+  window.nova.plugins.onInstalled((r) => {
+    if (r && r.ok) {
+      toast(`„${r.ext.name}" in NOVA installiert ✓`);
+      if (!$('#hub').classList.contains('hidden') && $('#panel-plugins').classList.contains('active')) renderPlugins();
+    } else if (r) toast('Installation fehlgeschlagen: ' + (r.error || 'unbekannt'), 'i-x');
+  });
+  return { refresh, closePopup };
 })();
 
 /* ---- Favorit speichern (Ordner wählen / anlegen) ---- */
@@ -3657,8 +4500,10 @@ const updater = (() => {
   renderBookmarks();
   syncShieldBadge();
   teEdit.apply();
+  extActions.refresh();
   if (state.settings.tabBarPosition === 'top') document.body.classList.add('tabs-top');
   music.applySettings();
+  claude.applySettings();
   restoreSession(data.sessionTabs, data.startUrl);
   ensureIcon();
   // Warp-Animationen erst nach dem Startup zulassen (nicht beim Session-Restore)

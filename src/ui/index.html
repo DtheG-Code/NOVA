@@ -74,10 +74,18 @@
   <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-7 5 16 2.5-9H21"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="15" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></symbol>
   <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 18a9 9 0 1 1 15 0"/><path d="M12 14l4-4"/><circle cx="12" cy="14" r="1.4"/></symbol>
+  <symbol id="i-plugin" viewBox="0 0 24 24"><path d="M10 3v2.5a1.5 1.5 0 0 0 3 0V3h4v4h2.5a1.5 1.5 0 0 1 0 3H17v4h-2.5a1.5 1.5 0 0 0 0 3H17v4h-4v-2.5a1.5 1.5 0 0 0-3 0V21H6v-4H3.5a1.5 1.5 0 0 1 0-3H6v-4H3.5a1.5 1.5 0 0 1 0-3H6V3z"/></symbol>
+  <symbol id="i-code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.01"/></symbol>
+  <symbol id="i-puzzle-add" viewBox="0 0 24 24"><path d="M5 5h6v3a2 2 0 1 0 4 0V5h4v14H5z"/><path d="M9 12h6M12 9v6"/></symbol>
   <symbol id="i-up-down" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 10.6a3 3 0 0 0 4 4M9.4 5.2A9.7 9.7 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 3.9M6.1 6.1A17 17 0 0 0 2 12s4 7 10 7a9.7 9.7 0 0 0 3-.5"/></symbol>
   <symbol id="i-trash-sm" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></symbol>
+  <symbol id="i-claude" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" d="M12 12L20.6 12M12 12L16.3 19.45M12 12L7.7 19.45M12 12L3.4 12M12 12L7.7 4.55M12 12L16.3 4.55M12 12L16.68 14.7M12 12L12 17.4M12 12L7.32 14.7M12 12L7.32 9.3M12 12L12 6.6M12 12L16.68 9.3"/></symbol>
+  <symbol id="i-agent" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M8.5 12h.01M15.5 12h.01M9 16h6"/><circle cx="3" cy="13" r="1"/><circle cx="21" cy="13" r="1"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-7-7 16-2.5-6.5z"/></symbol>
 </svg>
 
 <div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
@@ -188,6 +196,7 @@
       </div>
 
       <div class="right-btns no-drag" id="right-btns">
+        <button class="icon-btn topbar-tool" data-tool="claude" id="btn-claude" title="Claude (NOVA AI)"><svg class="ic"><use href="#i-claude"/></svg></button>
         <button class="icon-btn topbar-tool" data-tool="music" id="btn-music" title="Musik (Spotify &amp; Apple Music)"><svg class="ic"><use href="#i-music"/></svg></button>
         <button class="icon-btn topbar-tool" data-tool="downloads" id="btn-downloads-top" title="Downloads">
           <svg class="ic"><use href="#i-download"/></svg>
@@ -200,6 +209,8 @@
           <svg class="ic"><use href="#i-shield"/></svg>
           <span id="shield-badge" class="badge">0</span>
         </button>
+        <button class="icon-btn topbar-tool" data-tool="plugins" id="btn-plugins" title="Plugin-Store"><svg class="ic"><use href="#i-plugin"/></svg></button>
+        <span id="ext-actions" class="ext-actions"></span>
         <button class="icon-btn topbar-tool" data-tool="palette" id="btn-palette" title="Befehlspalette (Strg K)"><svg class="ic"><use href="#i-bolt"/></svg></button>
         <button class="icon-btn" id="btn-edit-topbar" title="Topbar anpassen"><svg class="ic"><use href="#i-sliders"/></svg></button>
       </div>
@@ -338,10 +349,46 @@
   <div class="music-body" id="music-body"></div>
   <div class="music-foot no-drag">
     <button class="icon-btn slim" id="music-vol-btn" title="Stummschalten (nur Musik)"><svg class="ic"><use href="#i-audio"/></svg></button>
-    <input type="range" id="music-vol" class="music-vol" min="0" max="100" step="1" value="100" title="Musik-Lautstärke" />
+    <div class="music-vol-wrap">
+      <input type="range" id="music-vol" class="music-vol" min="0" max="300" step="1" value="100" title="Musik-Lautstärke (bis 300 %)" />
+      <span class="music-vol-boostzone"></span>
+    </div>
     <span id="music-vol-val" class="music-vol-val">100%</span>
   </div>
   <div class="music-resize" id="music-resize" title="Größe ändern"></div>
+</div>
+
+<!-- ===================== CLAUDE (NOVA AI) ===================== -->
+<div id="claude-panel" class="hidden">
+  <div class="claude-head">
+    <div class="claude-title no-drag">
+      <span class="claude-mark"><svg class="ic"><use href="#i-claude"/></svg></span>
+      <span>NOVA AI</span>
+    </div>
+    <div class="claude-head-btns no-drag">
+      <button class="icon-btn slim" id="claude-agent" title="Agent-Modus (Recherche-Copilot)"><svg class="ic"><use href="#i-agent"/></svg></button>
+      <button class="icon-btn slim" id="claude-reload" title="Neu laden"><svg class="ic"><use href="#i-reload"/></svg></button>
+      <button class="icon-btn slim" id="claude-popout" title="In neuem Tab öffnen"><svg class="ic"><use href="#i-expand"/></svg></button>
+      <button class="icon-btn slim" id="claude-close" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+  </div>
+  <div class="claude-agentbar no-drag hidden" id="claude-agentbar">
+    <div class="ca-actions">
+      <button class="ca-chip" data-prompt="summary"><svg class="ic"><use href="#i-file"/></svg>Zusammenfassen</button>
+      <button class="ca-chip" data-prompt="explain"><svg class="ic"><use href="#i-bolt"/></svg>Erklären</button>
+      <button class="ca-chip" data-prompt="sources"><svg class="ic"><use href="#i-shield"/></svg>Quellen prüfen</button>
+      <button class="ca-chip" data-prompt="key"><svg class="ic"><use href="#i-star"/></svg>Kernpunkte</button>
+    </div>
+    <div class="ca-input-row">
+      <input id="ca-input" type="text" spellcheck="false" placeholder="Frage zur Seite — oder Recherche-Ziel …" />
+      <button class="icon-btn slim" id="ca-send" title="Frage zur aktuellen Seite an Claude senden"><svg class="ic"><use href="#i-send"/></svg></button>
+      <button class="icon-btn slim" id="ca-research" title="Autonom recherchieren (Claude öffnet selbst Seiten)"><svg class="ic"><use href="#i-agent"/></svg></button>
+      <button class="icon-btn slim hidden" id="ca-stop" title="Recherche stoppen"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="ca-log" id="ca-log"></div>
+  </div>
+  <div class="claude-body" id="claude-body"></div>
+  <div class="claude-resize" id="claude-resize" title="Größe ändern"></div>
 </div>
 
 <!-- ===================== SPACE EDITOR ===================== -->
@@ -417,6 +464,7 @@
       <div class="hub-logo"><svg class="nova-mark small"><use href="#i-nova"/></svg></div>
       <button data-panel="history" class="hub-nav-btn"><svg class="ic"><use href="#i-clock"/></svg><span>Verlauf</span></button>
       <button data-panel="downloads" class="hub-nav-btn"><svg class="ic"><use href="#i-download"/></svg><span>Downloads</span></button>
+      <button data-panel="plugins" class="hub-nav-btn"><svg class="ic"><use href="#i-plugin"/></svg><span>Plugins</span></button>
       <button data-panel="settings" class="hub-nav-btn"><svg class="ic"><use href="#i-gear"/></svg><span>Einstellungen</span></button>
       <div class="hub-nav-spacer"></div>
       <button id="hub-close" class="hub-nav-btn"><svg class="ic"><use href="#i-x"/></svg><span>Schließen</span></button>
@@ -441,12 +489,35 @@
         <div id="downloads-list" class="panel-scroll"></div>
       </section>
 
+      <section id="panel-plugins" class="hub-panel">
+        <div class="panel-head">
+          <h2>Plugin-Store</h2>
+          <div class="panel-head-actions">
+            <div class="plug-tabs" id="plug-tabs">
+              <button class="plug-tab active" data-ptab="discover">Entdecken</button>
+              <button class="plug-tab" data-ptab="scripts">Userscripts</button>
+              <button class="plug-tab" data-ptab="ext">Erweiterungen</button>
+            </div>
+          </div>
+        </div>
+        <div id="plugins-body" class="panel-scroll"></div>
+      </section>
+
       <section id="panel-settings" class="hub-panel">
         <div class="panel-head"><h2>Einstellungen</h2></div>
         <div id="settings-body" class="panel-scroll"></div>
       </section>
     </div>
   </div>
+</div>
+
+<!-- ===================== ERWEITERUNGS-POPUP ===================== -->
+<div id="ext-popup" class="hidden">
+  <div class="ext-pop-head">
+    <span id="ext-pop-title">Erweiterung</span>
+    <button class="icon-btn slim" id="ext-pop-close" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+  </div>
+  <div id="ext-pop-body"></div>
 </div>
 
 <!-- ===================== CONTEXT MENU ===================== -->

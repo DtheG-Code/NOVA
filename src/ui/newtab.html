@@ -647,6 +647,19 @@ function syncSceneAccent(){
   const b = cs.getPropertyValue('--acc2') || '#7c4dff';
   setSceneAccent(hexToLinear(a), hexToLinear(b));
 }
+// Akzentfarbe anwenden (Standardpaletten + Custom) und Szene live umfärben
+const NT_ACCENTS = {
+  cyan: ['#00e5ff', '#7c4dff'], violet: ['#a78bfa', '#ec4899'], magenta: ['#f471b5', '#7c3aed'],
+  lime: ['#a3e635', '#22d3ee'], amber: ['#fbbf24', '#fb7185'], ice: ['#7dd3fc', '#818cf8'],
+};
+function applyNtAccent(accent, custom){
+  let a1, a2;
+  if (accent === 'custom' && custom) { a1 = custom.a || '#00e5ff'; a2 = custom.b || '#7c4dff'; }
+  else { const p = NT_ACCENTS[accent] || NT_ACCENTS.cyan; a1 = p[0]; a2 = p[1]; }
+  document.documentElement.style.setProperty('--acc', a1);
+  document.documentElement.style.setProperty('--acc2', a2);
+  syncSceneAccent();
+}
 syncSceneAccent();
 
 // Fallback: klassisches 2D-Starfield, falls WebGL nicht verfügbar ist
@@ -842,19 +855,9 @@ function closeSugg() {
   try { DATA = await window.novaPage?.getData(); } catch {}
   if (!DATA) return;
 
-  if (DATA.accent === 'custom' && DATA.customAccent) {
-    document.documentElement.style.setProperty('--acc', DATA.customAccent.a || '#00e5ff');
-    document.documentElement.style.setProperty('--acc2', DATA.customAccent.b || '#7c4dff');
-  } else {
-    const ACCENTS = {
-      cyan: ['#00e5ff', '#7c4dff'], violet: ['#a78bfa', '#ec4899'], magenta: ['#f471b5', '#7c3aed'],
-      lime: ['#a3e635', '#22d3ee'], amber: ['#fbbf24', '#fb7185'], ice: ['#7dd3fc', '#818cf8'],
-    };
-    const [a1, a2] = ACCENTS[DATA.accent] || ACCENTS.cyan;
-    document.documentElement.style.setProperty('--acc', a1);
-    document.documentElement.style.setProperty('--acc2', a2);
-  }
-  syncSceneAccent();
+  applyNtAccent(DATA.accent, DATA.customAccent);
+  // Live-Umfärben, wenn die Akzentfarbe im Browser geändert wird (kein Neuladen nötig)
+  try { window.novaPage?.onAccent((d) => applyNtAccent(d.accent, d.customAccent)); } catch {}
 
   const h = new Date().getHours();
   const greeting = h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Guten Tag' : 'Guten Abend';

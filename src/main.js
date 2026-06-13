@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const https = require('node:https');
 const http = require('node:http');
+const zlib = require('node:zlib');
 const { Transform } = require('node:stream');
 const { pathToFileURL } = require('node:url');
 const { execFile } = require('node:child_process');
@@ -88,7 +89,24 @@ const DEFAULT_SETTINGS = {
   topbarTools: null,   // null => alle sichtbar
   bmCollapsed: false,
   tabBarPosition: 'top', // Werkseinstellung: Tabs oben
+  tabSuspend: true,      // inaktive Tabs pausieren (RAM sparen)
+  tabSuspendMin: 15,     // nach X Minuten Inaktivität
+  claudeDock: 'float',   // float | left | right | bottom | split-left | split-right
+  claudeFloat: null,
+  plugins: {},           // { [nativePluginId]: bool } — Zustand der eingebauten NOVA-Plugins
+  userscripts: [],       // [{ id, name, code, matches, enabled }] — eigene Skripte (wie Tampermonkey)
+  extensions: [],        // [{ id, name, path, enabled }] — geladene entpackte Chrome-Erweiterungen
+  topbarExtHidden: [],   // Erweiterungs-Toolbar-Icons, die in der Topbar ausgeblendet sind
 };
+
+// Eingebaute NOVA-Plugins, die standardmäßig AN sind (Adblock ist separat über adblockEnabled).
+const NATIVE_PLUGIN_DEFAULTS = { darkmode: false, cookiekill: true, unblock: false, videospeed: false, scrolltop: false, autohttps: false };
+function nativePluginState() {
+  const saved = settings.get('plugins', {}) || {};
+  const out = {};
+  for (const id of Object.keys(NATIVE_PLUGIN_DEFAULTS)) out[id] = id in saved ? !!saved[id] : NATIVE_PLUGIN_DEFAULTS[id];
+  return out;
+}
 
 // ---------------------------------------------------------------- protocol
 protocol.registerSchemesAsPrivileged([
@@ -933,9 +951,19 @@ app.whenReady().then(async () => {
     cb(allowed.includes(permission));
   });
 
+  // Eigene, persistente Session für die Claude-Integration (claude.ai-Login bleibt
+  // erhalten). Adblock greift hier NICHT. Chrome-UA für volle Kompatibilität.
+  const claudeSes = session.fromPartition('persist:nova-claude');
+  claudeSes.setUserAgent(chromeUA);
+  claudeSes.setPermissionRequestHandler((_wc, permission, cb) => {
+    const allowed = ['fullscreen', 'clipboard-sanitized-write', 'clipboard-read', 'media', 'notifications', 'pointerLock'];
+    cb(allowed.includes(permission));
+  });
+
   setupDownloads();
   createWindow();
   initAdblock(); // läuft asynchron weiter
+  loadStoredExtensions(); // gespeicherte Chrome-Erweiterungen laden (asynchron)
 
   // Start-Menü-Verknüpfung sicherstellen → korrektes Taskleisten-Icon (auch angeheftet)
   if (process.platform === 'win32') {
@@ -993,6 +1021,267 @@ ipcMain.handle('settings:set', (_e, patch) => {
   return settings.data;
 });
 
+// ---------------------------------------------------------------- Plugins
+// Aktive Konfiguration für die Webview-Preload (synchron, läuft beim Seitenstart).
+ipcMain.on('plugins:getActive', (e) => {
+  e.returnValue = {
+    native: nativePluginState(),
+    userscripts: (settings.get('userscripts', []) || []).filter((u) => u && u.enabled && u.code),
+  };
+});
+
+ipcMain.handle('plugins:state', () => ({
+  native: nativePluginState(),
+  userscripts: settings.get('userscripts', []) || [],
+  extensions: settings.get('extensions', []) || [],
+}));
+
+// Toolbar-Icons (browser actions) der geladenen Erweiterungen für die Topbar.
+function pickActionIcon(manifest) {
+  const a = manifest.action || manifest.browser_action || {};
+  const di = a.default_icon || manifest.icons || null;
+  if (!di) return null;
+  if (typeof di === 'string') return di;
+  for (const s of ['32', '48', '38', '24', '128', '16']) if (di[s]) return di[s];
+  const k = Object.keys(di)[0];
+  return k ? di[k] : null;
+}
+ipcMain.handle('plugins:actions', () => {
+  if (!ses || !ses.getAllExtensions) return [];
+  const out = [];
+  for (const e of ses.getAllExtensions()) {
+    const m = e.manifest || {};
+    const a = m.action || m.browser_action;
+    if (!a) continue; // nur Erweiterungen mit Toolbar-Button
+    let iconData = null;
+    const rel = pickActionIcon(m);
+    if (rel) {
+      try {
+        const p = path.join(e.path, String(rel).replace(/^\/+/, ''));
+        if (fs.existsSync(p)) {
+          const ext = path.extname(p).slice(1).toLowerCase();
+          const mime = ext === 'svg' ? 'image/svg+xml' : (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'image/png';
+          iconData = 'data:' + mime + ';base64,' + fs.readFileSync(p).toString('base64');
+        }
+      } catch {}
+    }
+    // Popup-URL bestimmen: bevorzugt default_popup, sonst eine sinnvolle Einstiegsseite
+    // raten (viele Erweiterungen wie NordPass deklarieren keinen Popup, sondern öffnen
+    // ihre UI per Klick-Handler → wir öffnen ihre Hauptseite app.html/popup.html/index.html).
+    let popupRel = a.default_popup ? String(a.default_popup).replace(/^\/+/, '') : null;
+    if (!popupRel) {
+      for (const cand of ['popup.html', 'popup/popup.html', 'popup/index.html', 'app.html', 'index.html', 'main.html', 'dialog.html', 'page.html']) {
+        if (fs.existsSync(path.join(e.path, cand))) { popupRel = cand; break; }
+      }
+    }
+    const popup = popupRel ? e.url + popupRel : null;
+    out.push({ id: e.id, name: e.name, title: a.default_title || e.name, icon: iconData, popup });
+  }
+  return out;
+});
+
+ipcMain.handle('plugins:setNative', (_e, { id, on }) => {
+  const p = { ...(settings.get('plugins', {}) || {}) };
+  p[id] = !!on;
+  settings.set('plugins', p);
+  broadcast('settings:changed', settings.data);
+  return nativePluginState();
+});
+
+function uid() { return 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+ipcMain.handle('plugins:saveUserscript', (_e, script) => {
+  const list = (settings.get('userscripts', []) || []).slice();
+  const clean = {
+    id: script.id || uid(),
+    name: (script.name || 'Neues Skript').slice(0, 80),
+    code: String(script.code || ''),
+    matches: (script.matches || '*').trim() || '*',
+    enabled: script.enabled !== false,
+  };
+  const i = list.findIndex((u) => u.id === clean.id);
+  if (i >= 0) list[i] = clean; else list.push(clean);
+  settings.set('userscripts', list);
+  return list;
+});
+
+ipcMain.handle('plugins:removeUserscript', (_e, id) => {
+  const list = (settings.get('userscripts', []) || []).filter((u) => u.id !== id);
+  settings.set('userscripts', list);
+  return list;
+});
+
+ipcMain.handle('plugins:toggleUserscript', (_e, { id, on }) => {
+  const list = (settings.get('userscripts', []) || []).map((u) => (u.id === id ? { ...u, enabled: !!on } : u));
+  settings.set('userscripts', list);
+  return list;
+});
+
+// Echte (entpackte) Chrome-Erweiterung über einen Ordner-Dialog laden.
+ipcMain.handle('plugins:loadExtension', async () => {
+  if (!ses) return { ok: false, error: 'Session nicht bereit' };
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Entpackte Erweiterung laden (Ordner mit manifest.json)',
+    properties: ['openDirectory'],
+  });
+  if (r.canceled || !r.filePaths[0]) return { ok: false, canceled: true };
+  const dir = r.filePaths[0];
+  if (!fs.existsSync(path.join(dir, 'manifest.json'))) {
+    return { ok: false, error: 'Kein manifest.json im gewählten Ordner gefunden.' };
+  }
+  try {
+    const ext = await ses.loadExtension(dir, { allowFileAccess: true });
+    const list = (settings.get('extensions', []) || []).filter((x) => x.path !== dir);
+    const entry = { id: ext.id, name: ext.name, version: ext.version, path: dir, enabled: true };
+    list.push(entry);
+    settings.set('extensions', list);
+    broadcast('plugins:actionsChanged');
+    return { ok: true, ext: entry };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('plugins:removeExtension', (_e, id) => {
+  try { if (ses) ses.removeExtension(id); } catch {}
+  const list = (settings.get('extensions', []) || []).filter((x) => x.id !== id);
+  settings.set('extensions', list);
+  broadcast('plugins:actionsChanged');
+  return list;
+});
+
+ipcMain.handle('plugins:toggleExtension', async (_e, { id, on }) => {
+  const list = (settings.get('extensions', []) || []).slice();
+  const ext = list.find((x) => x.id === id);
+  if (!ext) return list;
+  try {
+    if (on) { if (ses) await ses.loadExtension(ext.path, { allowFileAccess: true }); }
+    else { if (ses) ses.removeExtension(id); }
+    ext.enabled = !!on;
+    settings.set('extensions', list);
+  } catch (err) { ext.error = err.message; }
+  broadcast('plugins:actionsChanged');
+  return list;
+});
+
+// ---- Echte Chrome-Web-Store-Erweiterung installieren (CRX laden → entpacken → laden) ----
+// Extension-ID aus einer Store-URL oder Roh-Eingabe ziehen (32 Zeichen a–p).
+function parseExtId(input) {
+  const s = String(input || '').trim();
+  const m = s.match(/([a-p]{32})/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+// CRX-Container (Cr24, v2/v3) auf das enthaltene ZIP zurechtschneiden.
+function crxToZip(buf) {
+  if (buf[0] === 0x50 && buf[1] === 0x4b) return buf; // schon ZIP (PK)
+  if (!(buf[0] === 0x43 && buf[1] === 0x72 && buf[2] === 0x32 && buf[3] === 0x34)) {
+    throw new Error('Antwort ist keine CRX-Datei (evtl. Erweiterung nicht verfügbar).');
+  }
+  const version = buf.readUInt32LE(4);
+  if (version === 3) { const headerLen = buf.readUInt32LE(8); return buf.subarray(12 + headerLen); }
+  if (version === 2) { const pub = buf.readUInt32LE(8), sig = buf.readUInt32LE(12); return buf.subarray(16 + pub + sig); }
+  throw new Error('Unbekannte CRX-Version ' + version);
+}
+
+// Minimaler ZIP-Entpacker (Store + Deflate) ohne externe Abhängigkeit.
+function unzipTo(buf, dest) {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0 && i > buf.length - 22 - 65536; i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('ZIP: Zentralverzeichnis nicht gefunden');
+  const count = buf.readUInt16LE(eocd + 10);
+  let off = buf.readUInt32LE(eocd + 16);
+  const destAbs = path.resolve(dest);
+  for (let n = 0; n < count; n++) {
+    if (off + 46 > buf.length || buf.readUInt32LE(off) !== 0x02014b50) break;
+    const method = buf.readUInt16LE(off + 10);
+    const compSize = buf.readUInt32LE(off + 20);
+    const nameLen = buf.readUInt16LE(off + 28);
+    const extraLen = buf.readUInt16LE(off + 30);
+    const commentLen = buf.readUInt16LE(off + 32);
+    const lho = buf.readUInt32LE(off + 42);
+    const name = buf.toString('utf8', off + 46, off + 46 + nameLen);
+    off += 46 + nameLen + extraLen + commentLen;
+    if (buf.readUInt32LE(lho) !== 0x04034b50) continue;
+    const lName = buf.readUInt16LE(lho + 26);
+    const lExtra = buf.readUInt16LE(lho + 28);
+    const dataStart = lho + 30 + lName + lExtra;
+    const outPath = path.join(dest, name);
+    if (!path.resolve(outPath).startsWith(destAbs)) continue; // Zip-Slip-Schutz
+    if (name.endsWith('/')) { fs.mkdirSync(outPath, { recursive: true }); continue; }
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    const raw = buf.subarray(dataStart, dataStart + compSize);
+    let data;
+    if (method === 0) data = raw;
+    else if (method === 8) { try { data = zlib.inflateRawSync(raw); } catch { continue; } }
+    else continue;
+    fs.writeFileSync(outPath, data);
+  }
+}
+
+async function installChromeExtension(idOrUrl) {
+  if (!ses) return { ok: false, error: 'Session nicht bereit' };
+  const id = parseExtId(idOrUrl);
+  if (!id) return { ok: false, error: 'Keine gültige Erweiterungs-ID/URL erkannt.' };
+  const ver = process.versions.chrome || '120.0.0.0';
+  const url = 'https://clients2.google.com/service/update2/crx?response=redirect&acceptformat=crx2,crx3'
+    + '&prodversion=' + encodeURIComponent(ver)
+    + '&x=' + encodeURIComponent('id=' + id + '&installsource=ondemand&uc');
+  try {
+    const res = await net.fetch(url, {
+      redirect: 'follow',
+      headers: { 'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver} Safari/537.36` },
+    });
+    if (!res.ok) return { ok: false, error: 'Download fehlgeschlagen (HTTP ' + res.status + ')' };
+    const buf = Buffer.from(await res.arrayBuffer());
+    const zip = crxToZip(buf);
+    const dir = path.join(app.getPath('userData'), 'extensions', id);
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    fs.mkdirSync(dir, { recursive: true });
+    unzipTo(zip, dir);
+    if (!fs.existsSync(path.join(dir, 'manifest.json'))) return { ok: false, error: 'Im Paket wurde keine manifest.json gefunden.' };
+    const ext = await ses.loadExtension(dir, { allowFileAccess: true });
+    const list = (settings.get('extensions', []) || []).filter((x) => x.id !== ext.id && x.storeId !== id);
+    const entry = { id: ext.id, name: ext.name, version: ext.version, path: dir, enabled: true, source: 'store', storeId: id };
+    list.push(entry);
+    settings.set('extensions', list);
+    broadcast('plugins:actionsChanged');
+    return { ok: true, ext: entry };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+ipcMain.handle('plugins:installFromStore', (_e, idOrUrl) => installChromeExtension(idOrUrl));
+
+// Von einer Chrome-Web-Store-Seite aus installieren (Button wird per webview-preload
+// auf der Store-Seite eingeblendet) → Ergebnis als Toast ans Chrome-Fenster.
+ipcMain.on('plugins:installFromPage', async (_e, idOrUrl) => {
+  const r = await installChromeExtension(idOrUrl);
+  broadcast('plugins:installed', r);
+});
+
+// Beim Start alle aktivierten Erweiterungen in die Haupt-Session laden.
+async function loadStoredExtensions() {
+  if (!ses) return;
+  const list = (settings.get('extensions', []) || []).slice();
+  let changed = false;
+  for (const ext of list) {
+    if (ext.enabled === false) continue;
+    try {
+      if (fs.existsSync(path.join(ext.path, 'manifest.json'))) {
+        const loaded = await ses.loadExtension(ext.path, { allowFileAccess: true });
+        ext.id = loaded.id; ext.name = loaded.name; delete ext.error;
+      } else { ext.error = 'Ordner fehlt'; }
+    } catch (err) { ext.error = err.message; }
+    changed = true;
+  }
+  if (changed) settings.set('extensions', list);
+  broadcast('plugins:actionsChanged');
+}
+
 // Adblock
 let adblockBusy = false;
 async function rebuildAdblock() {
@@ -1041,6 +1330,24 @@ ipcMain.on('music:mediaKey', (_e, { wcId, key }) => {
     wc.sendInputEvent({ type: 'keyDown', keyCode: key });
     wc.sendInputEvent({ type: 'keyUp', keyCode: key });
   } catch {}
+});
+
+// ECHTE Hardware-Medientaste auf Systemebene auslösen (Win32 keybd_event). Das ist
+// exakt das, was die Multimedia-Tasten der Tastatur tun → Chromium routet es an die
+// aktive MediaSession (= der spielende Musik-Webview). Funktioniert für Apple Music,
+// wo DOM-Klicks/synthetische Tasten nicht greifen.
+let hwKeyBusy = false;
+ipcMain.on('music:hwMediaKey', (_e, which) => {
+  if (process.platform !== 'win32' || hwKeyBusy) return;
+  const VK = which === 'next' ? '0xB0' : which === 'prev' ? '0xB1' : which === 'playpause' ? '0xB3' : null;
+  if (!VK) return;
+  hwKeyBusy = true;
+  // KEYEVENTF_EXTENDEDKEY(0x1) für Medientasten, KEYEVENTF_KEYUP(0x2) beim Loslassen.
+  const ps = `Add-Type -Namespace NovaMk -Name K -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, System.UIntPtr dwExtraInfo);' -ErrorAction SilentlyContinue; [NovaMk.K]::keybd_event(${VK},0,1,[System.UIntPtr]::Zero); [NovaMk.K]::keybd_event(${VK},0,3,[System.UIntPtr]::Zero)`;
+  try {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', ps],
+      { windowsHide: true, timeout: 4000 }, () => { hwKeyBusy = false; });
+  } catch { hwKeyBusy = false; }
 });
 
 // Suche / Vorschläge

@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('nova', {
   music: {
     drm: invoke('music:drm'),
     mediaKey: send('music:mediaKey'),
+    hwMediaKey: send('music:hwMediaKey'),
   },
 
   omni: {
@@ -95,6 +96,21 @@ contextBridge.exposeInMainWorld('nova', {
 
   session: {
     save: send('session:save'),
+  },
+
+  plugins: {
+    state: invoke('plugins:state'),
+    setNative: invoke('plugins:setNative'),
+    saveUserscript: invoke('plugins:saveUserscript'),
+    removeUserscript: invoke('plugins:removeUserscript'),
+    toggleUserscript: invoke('plugins:toggleUserscript'),
+    loadExtension: invoke('plugins:loadExtension'),
+    installFromStore: invoke('plugins:installFromStore'),
+    removeExtension: invoke('plugins:removeExtension'),
+    toggleExtension: invoke('plugins:toggleExtension'),
+    actions: invoke('plugins:actions'),
+    onActionsChanged: on('plugins:actionsChanged'),
+    onInstalled: on('plugins:installed'),
   },
 
   sys: {
