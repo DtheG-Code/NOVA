@@ -5700,10 +5700,12 @@ const updater = (() => {
     busy = false;
     if (res && res.ok && res.path) {
       $('#up-now').querySelector('span').textContent = 'Wird installiert …';
-      toast('Update wird installiert — NOVA startet neu', 'i-download');
+      toast('Update wird installiert — ggf. Adminrechte bestätigen, NOVA startet automatisch neu', 'i-download');
       window.nova.update.install(res.path);
-    } else if (res && res.opened) {
-      close(); // kein direkter Download → Release-Seite wurde geöffnet
+    } else if (res && res.noAsset) {
+      $('#up-now').disabled = false;
+      $('#up-now').querySelector('span').textContent = 'Jetzt aktualisieren';
+      toast('Kein Installationspaket im Release gefunden', 'i-warn');
     } else {
       $('#up-now').disabled = false;
       $('#up-now').querySelector('span').textContent = 'Erneut versuchen';

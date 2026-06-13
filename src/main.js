@@ -11,7 +11,7 @@ const http = require('node:http');
 const zlib = require('node:zlib');
 const { Transform } = require('node:stream');
 const { pathToFileURL } = require('node:url');
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const { JsonStore } = require('./store');
 const { importEdgeBookmarks } = require('./edge-import');
 
@@ -1651,7 +1651,7 @@ ipcMain.handle('update:check', () => checkUpdate());
 ipcMain.handle('update:openPage', () => { if (updateInfo) shell.openExternal(updateInfo.url); return true; });
 ipcMain.handle('update:download', async () => {
   if (!updateInfo) return { ok: false };
-  if (!updateInfo.assetUrl) { shell.openExternal(updateInfo.url); return { ok: false, opened: true }; }
+  if (!updateInfo.assetUrl) { return { ok: false, noAsset: true }; }   // keine Webseite aufmachen — still scheitern
   return new Promise((resolve) => {
     const dest = path.join(app.getPath('temp'), updateInfo.assetName);
     let file;
@@ -1669,8 +1669,61 @@ ipcMain.handle('update:download', async () => {
     req.end();
   });
 });
-ipcMain.handle('update:install', (_e, p) => {
-  try { shell.openPath(p); setTimeout(() => app.quit(), 800); return true; } catch { return false; }
+// ECHTES In-Place-Update: ZIP still entpacken → Dateien über die Installation spiegeln → NOVA neu starten.
+// Läuft über ein losgelöstes PowerShell-Skript (überlebt das Beenden von NOVA). Braucht das
+// Verzeichnis Adminrechte (z. B. Programme), wird per UAC nachgefragt. Kein Explorer, keine Webseite.
+ipcMain.handle('update:install', async (_e, zipPath) => {
+  try {
+    if (!zipPath || !fs.existsSync(zipPath)) return false;
+    if (process.platform !== 'win32') { shell.openPath(zipPath); setTimeout(() => app.quit(), 800); return true; }
+    const exePath = process.execPath;
+    const installDir = path.dirname(exePath);
+    const procName = path.basename(exePath).replace(/\.exe$/i, '');
+    const ts = Date.now();
+    const tmp = app.getPath('temp');
+    const stage = path.join(tmp, 'nova-update-' + ts);
+    const scriptPath = path.join(tmp, 'nova-update-' + ts + '.ps1');
+    const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
+    const ps = [
+      "$ErrorActionPreference='SilentlyContinue'",
+      '$zip=' + q(zipPath),
+      '$stage=' + q(stage),
+      '$dest=' + q(installDir),
+      '$exe=' + q(exePath),
+      '$proc=' + q(procName),
+      'Start-Sleep -Seconds 2',
+      'for($i=0;$i -lt 10;$i++){ if(-not(Get-Process -Name $proc -ErrorAction SilentlyContinue)){break}; Start-Sleep -Milliseconds 500 }',
+      'Get-Process -Name $proc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue',
+      'Start-Sleep -Milliseconds 1200',
+      'New-Item -ItemType Directory -Force -Path $stage | Out-Null',
+      'Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force',
+      "$src=Join-Path $stage 'NOVA'",
+      'if(-not (Test-Path $src)){ $src=$stage }',
+      // /E: kopieren+ueberschreiben, OHNE Extras zu loeschen (NovaData-Profil bleibt erhalten)
+      'robocopy $src $dest /E /R:2 /W:1 /NFL /NDL /NJH /NJS | Out-Null',
+      'if($LASTEXITCODE -lt 8){ Start-Process -FilePath $exe -WorkingDirectory $dest }',
+      'Start-Sleep -Seconds 1',
+      'Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue',
+      'Remove-Item -Force $zip -ErrorAction SilentlyContinue',
+      'Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue',
+    ].join('\r\n');
+    fs.writeFileSync(scriptPath, String.fromCharCode(0xFEFF) + ps, 'utf8');   // BOM → PowerShell liest Pfade mit Umlauten korrekt
+
+    // Schreibrecht im Installationsordner prüfen → sonst per UAC elevated ausführen
+    let writable = true;
+    try { const t = path.join(installDir, '.nova-wtest-' + ts); fs.writeFileSync(t, 'x'); fs.unlinkSync(t); } catch { writable = false; }
+    const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', scriptPath];
+    if (writable) {
+      spawn('powershell.exe', args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      setTimeout(() => app.quit(), 700);                 // App beenden → Skript spiegelt + startet neu
+    } else {
+      // UAC-Abfrage: elevated PowerShell führt das Update-Skript aus (force-killt NOVA selbst).
+      const inner = "Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File'," + q(scriptPath) + ')';
+      spawn('powershell.exe', ['-NoProfile', '-Command', inner], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      // Nicht selbst beenden: bei UAC-Abbruch bleibt NOVA normal offen; bei Zustimmung killt das Skript NOVA.
+    }
+    return true;
+  } catch { return false; }
 });
 
 // Session
