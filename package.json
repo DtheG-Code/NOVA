@@ -1,8 +1,8 @@
 {
   "name": "nova-browser",
   "productName": "Nova Browser",
-  "version": "3.1.0",
-  "description": "NOVA — Dein futuristischer Browser (Electron + Widevine, Adblock, Spaces, Split View, Musik-Player)",
+  "version": "4.0.0",
+  "description": "NOVA — Dein futuristischer Browser mit autonomem KI-Agenten (Electron + Widevine, Adblock, Spaces, Split View, Musik-Player, NOVA Operator)",
   "main": "src/main.js",
   "author": "Damian (DtheG)",
   "license": "MIT",

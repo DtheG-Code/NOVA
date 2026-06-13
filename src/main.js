@@ -100,7 +100,7 @@ const DEFAULT_SETTINGS = {
 };
 
 // Eingebaute NOVA-Plugins, die standardmäßig AN sind (Adblock ist separat über adblockEnabled).
-const NATIVE_PLUGIN_DEFAULTS = { darkmode: false, cookiekill: true, unblock: false, videospeed: false, scrolltop: false, autohttps: false };
+const NATIVE_PLUGIN_DEFAULTS = { darkmode: false, cookiekill: true, unblock: false, videospeed: false, scrolltop: false, autohttps: false, cinematicSpace: false };
 function nativePluginState() {
   const saved = settings.get('plugins', {}) || {};
   const out = {};
@@ -1688,6 +1688,7 @@ ipcMain.handle('newtab:data', async (e) => {
     dials: buildDials(10),
     totalBlocked: settings.get('totalBlocked', 0),
     weather: await getWeather(),
+    plugins: nativePluginState(),
   };
 });
 ipcMain.handle('newtab:suggest', (e, q) => (fromNova(e) ? fetchSuggestions(q) : []));

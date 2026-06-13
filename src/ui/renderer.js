@@ -820,6 +820,7 @@ $('#split-divider').addEventListener('mousedown', (e) => {
   if (!sp) return;
   $('#split-divider').classList.add('dragging');
   $('#drag-shield').classList.remove('hidden');
+  document.body.classList.add('split-dragging');   // Panes folgen sofort (keine Transition-Verzögerung)
   const area = $('#webviews').getBoundingClientRect();
   const onMove = (ev) => {
     sp.splitRatio = Math.min(0.85, Math.max(0.15, (ev.clientX - area.left) / area.width));
@@ -830,6 +831,7 @@ $('#split-divider').addEventListener('mousedown', (e) => {
     document.removeEventListener('mouseup', onUp);
     $('#split-divider').classList.remove('dragging');
     $('#drag-shield').classList.add('hidden');
+    document.body.classList.remove('split-dragging');
     saveSession();
   };
   document.addEventListener('mousemove', onMove);
@@ -991,6 +993,15 @@ function wireWebview(tab) {
 
   wv.addEventListener('found-in-page', (e) => {
     if (e.result) $('#find-count').textContent = `${e.result.activeMatchOrdinal}/${e.result.matches}`;
+  });
+
+  // Startseite → Agent-Modus: Suchbegriff als Ziel an den Operator übergeben (läuft im Hintergrund)
+  wv.addEventListener('ipc-message', (e) => {
+    if (e.channel === 'nova-agent') {
+      const goal = (e.args && e.args[0]) || '';
+      if (tab.id !== state.activeId) activateTab(tab.id);
+      if (goal) operator.run(goal);
+    }
   });
 }
 
@@ -1736,6 +1747,7 @@ const PLUGIN_CATALOG = [
   { id: 'videospeed', ic: 'i-gauge', cat: 'Medien', name: 'Video-Geschwindigkeit', desc: 'Steuere jedes HTML5-Video per Tastatur: S langsamer, D schneller, R zurück, X/Z springen.' },
   { id: 'scrolltop', ic: 'i-up-down', cat: 'Produktivität', name: 'Nach-oben-Button', desc: 'Blendet einen schwebenden Button ein, um schnell zum Seitenanfang zu springen.' },
   { id: 'autohttps', ic: 'i-shield', cat: 'Datenschutz', name: 'HTTPS erzwingen', desc: 'Leitet unsichere http-Seiten automatisch auf die verschlüsselte https-Variante um.' },
+  { id: 'cinematicSpace', ic: 'i-rocket', cat: 'Startseite', name: 'Cinematic Space Flight', desc: 'Ersetzt die Startseiten-Animation durch einen 4K-Flug durchs All: futuristisches Raumschiff, Planeten, Asteroiden & Lichteffekte. Aus → Standard-Universum kommt zurück.' },
 ];
 
 const plugState = { native: {}, userscripts: [], extensions: [], tab: 'discover' };
@@ -1793,6 +1805,7 @@ function paintPluginDiscover(body) {
           await window.nova.settings.set({ adblockEnabled: inp.checked });
         } else {
           plugState.native = await window.nova.plugins.setNative({ id: p.id, on: inp.checked });
+          pushPluginsToNewtabs(plugState.native);
         }
       });
       sw.appendChild(inp); sw.appendChild(el('i')); head.appendChild(sw);
@@ -2025,6 +2038,29 @@ function renderSettings() {
   const genCard = el('div', 'set-card');
   genCard.appendChild(inputRow('Dein Name', 'Für die Begrüßung auf der Startseite', 'userName', 'Name'));
   gGen.appendChild(genCard);
+
+  // KI-Agent
+  const gAgent = group('KI-Agent');
+  const agentCard = el('div', 'set-card');
+  const stepRow = el('div', 'set-row');
+  const stepLab = el('div', 'set-label');
+  stepLab.appendChild(el('b', null, 'Maximale Schritte pro Auftrag'));
+  stepLab.appendChild(el('span', null, 'Höchstzahl an Aktionen, bevor der Agent stoppt. „Unbegrenzt" läuft bis zum Ziel — jederzeit über den Stopp-Button in der Agenten-Ansicht abbrechbar.'));
+  const stepChips = el('div', 'step-chips');
+  const curSteps = (s.agentMaxSteps === 0 || s.agentMaxSteps === '0') ? '0' : String(s.agentMaxSteps || 12);
+  for (const [val, label] of [['8', '8'], ['12', '12'], ['20', '20'], ['30', '30'], ['0', 'Unbegrenzt']]) {
+    const chip = el('button', 'step-chip' + (curSteps === val ? ' sel' : ''), label);
+    chip.addEventListener('click', async () => {
+      const v = val === '0' ? 0 : +val;
+      state.settings.agentMaxSteps = v;
+      await window.nova.settings.set({ agentMaxSteps: v });
+      renderSettings();
+    });
+    stepChips.appendChild(chip);
+  }
+  stepRow.append(stepLab, stepChips);
+  agentCard.appendChild(stepRow);
+  gAgent.appendChild(agentCard);
 
   // Suchmaschine
   const gEngine = group('Suchmaschine');
@@ -2475,6 +2511,7 @@ $('#cheats').addEventListener('mousedown', (e) => { if (e.target === $('#cheats'
 function toggleSidebar() {
   const collapsed = $('#app').classList.toggle('sb-collapsed');
   window.nova.settings.set({ sidebarCollapsed: collapsed });
+  if (typeof operator !== 'undefined') operator.relayoutAnimated();   // Bühne SOFORT mit der Sidebar mit-animieren
   setTimeout(() => { if (typeof claude !== 'undefined') claude.relayout(); }, 320);
 }
 $('#bm-head').addEventListener('click', () => {
@@ -2631,6 +2668,15 @@ function pushAccentToNewtabs() {
     const url = t.pendingUrl || t.url;
     if (isInternal(url) && t.wcId != null) {
       try { t.wv.send('newtab:accent', payload); } catch {}
+    }
+  }
+}
+// Plugin-Zustand (z. B. Startseiten-Animation) live an alle offenen Startseiten schicken
+function pushPluginsToNewtabs(native) {
+  for (const t of state.tabs) {
+    const url = t.pendingUrl || t.url;
+    if (isInternal(url) && t.wcId != null) {
+      try { t.wv.send('newtab:plugins', native); } catch {}
     }
   }
 }
@@ -3059,6 +3105,7 @@ const music = (() => {
   const SERVICES = {
     spotify: { url: 'https://open.spotify.com', label: 'Spotify' },
     apple:   { url: 'https://music.apple.com',  label: 'Apple Music' },
+    ytmusic: { url: 'https://music.youtube.com', label: 'YouTube Music' },
   };
   const panel = $('#music-panel');
   const body = $('#music-body');
@@ -3078,7 +3125,25 @@ const music = (() => {
     return `(function(){
       try {
         window.__novaVol = ${vol};
-        var engage = window.__novaVol > 1.0001 || window.__novaWA;
+        // DRM-Audio (Spotify/Apple Music/Tidal …, Widevine/FairPlay): createMediaElementSource
+        // bricht/stummt den Stream → bei DRM NIEMALS Web-Audio. Nur element.volume (kein Boost).
+        // Nicht-DRM (YouTube, YouTube Music, SoundCloud) → Boost >100% via Web-Audio möglich.
+        var host = location.hostname;
+        var isDRM = /spotify|music\.apple|tidal|deezer|amazon|pandora|qobuz/.test(host);
+        var isSpotify = /spotify/.test(host);
+        var engage = (window.__novaVol > 1.0001 || window.__novaWA) && !isDRM;
+        var setSpotifyNative = function(){
+          try {
+            var t = Math.min(1, window.__novaVol);
+            var inp = document.querySelector('[data-testid="volume-bar"] input[type="range"], input[aria-label*="olume" i][type="range"], input[aria-label*="autst" i][type="range"]');
+            if (inp) {
+              var d = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+              if (d && d.set) d.set.call(inp, String(t)); else inp.value = String(t);
+              inp.dispatchEvent(new Event('input', { bubbles: true }));
+              inp.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          } catch(_){}
+        };
         var apply = function(){
           try {
             var els = document.querySelectorAll('video,audio');
@@ -3095,11 +3160,12 @@ const music = (() => {
               });
               if (ac.state === 'suspended') ac.resume().catch(function(){});
             } else {
+              var t = Math.min(1, window.__novaVol);
               els.forEach(function(e){
-                var t = Math.min(1, window.__novaVol);
                 if (Math.abs((e.volume||0) - t) > 0.005) { try { e.volume = t; } catch(_){} }
                 if (window.__novaVol === 0) e.muted = true; else if (e.muted && e.dataset.novaUnmute !== '0') e.muted = false;
               });
+              if (isSpotify) setSpotifyNative();
             }
           } catch(_){}
         };
@@ -3140,6 +3206,10 @@ const music = (() => {
     wv.setAttribute('partition', MUSIC_PARTITION);
     wv.setAttribute('allowpopups', '');
     wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
+    // YouTube Music: Webview-Preload anhängen → der YouTube-Werbe-Entferner greift
+    // (gleicher /youtubei/v1/player-Endpunkt) → werbefrei, alles gratis hörbar.
+    // Spotify/Apple bleiben bewusst OHNE Preload (Player-Kompatibilität).
+    if (svc === 'ytmusic' && state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
     wv.setAttribute('src', SERVICES[svc].url);
     wv.addEventListener('did-stop-loading', () => {
       loading.style.display = 'none';
@@ -3157,7 +3227,7 @@ const music = (() => {
 
   // „Render breit, skaliere klein" — NUR für Spotify (war rechts abgeschnitten).
   // Apple Music sah ohne Zoom besser aus → dort Zoom 1 lassen.
-  const TARGET_W = { spotify: 660 };
+  const TARGET_W = { spotify: 660, ytmusic: 540 };
   function applyZoom(svc, wv) {
     const w = body.clientWidth;
     if (!w) return;
@@ -3192,16 +3262,43 @@ const music = (() => {
     });
   }
 
+  function pauseView(wv) {
+    try { wv.executeJavaScript('(function(){try{document.querySelectorAll("video,audio").forEach(function(e){try{if(!e.paused)e.pause();}catch(_){}})}catch(_){}})()', true).catch(() => {}); } catch {}
+  }
   function show(svc) {
     current = svc;
     ensureView(svc);
     for (const [key, v] of Object.entries(views)) {
       v.wrap.style.display = key === svc ? 'block' : 'none';
       if (key === svc) repaintMusic(v.wv);
+      else pauseView(v.wv);   // HARD-SWITCH: andere Dienste sofort pausieren
     }
-    for (const b of panel.querySelectorAll('.music-svc')) b.classList.toggle('active', b.dataset.svc === svc);
+    let activeBtn = null;
+    for (const b of panel.querySelectorAll('.music-svc')) {
+      const on = b.dataset.svc === svc;
+      b.classList.toggle('active', on);
+      if (on) activeBtn = b;
+    }
+    updateTabScroll();
+    // Aktiven Tab NUR im Strip selbst zentrieren (kein scrollIntoView → keine
+    // Seiteneffekte/Springen übergeordneter Container) und nur bei echtem Overflow.
+    const strip = $('#music-services');
+    if (activeBtn && strip && strip.scrollWidth > strip.clientWidth + 4) {
+      const target = activeBtn.offsetLeft - (strip.clientWidth - activeBtn.offsetWidth) / 2;
+      strip.scrollTo({ left: Math.max(0, target), behavior: 'smooth' });
+    }
     state.settings.musicService = svc;
     window.nova.settings.set({ musicService: svc });
+    npView = views[svc] ? views[svc].wv : null;
+    setTimeout(pollNowPlaying, 250);
+    setTimeout(pollNowPlaying, 900);
+  }
+  // Service-Strip: Pfeile/Scroll-Status aktualisieren (zeigt nur was passt, Rest scrollt)
+  function updateTabScroll() {
+    const strip = $('#music-services'); const row = $('.music-tabs-row');
+    if (!strip || !row) return;
+    const over = strip.scrollWidth > strip.clientWidth + 4;
+    row.classList.toggle('scrollable', over);
   }
 
   function toggle(force) {
@@ -3212,8 +3309,9 @@ const music = (() => {
       if (!current) show(state.settings.musicService || 'spotify');
       else if (views[current]) repaintMusic(views[current].wv);
       checkDrm();
+      updateTabScroll();
       // Nach dem Einblenden (Animation) Größe & Compositing fixieren
-      setTimeout(() => { sizeViews(); if (current && views[current]) repaintMusic(views[current].wv); }, 380);
+      setTimeout(() => { sizeViews(); updateTabScroll(); if (current && views[current]) repaintMusic(views[current].wv); }, 380);
     }
   }
 
@@ -3300,8 +3398,41 @@ const music = (() => {
     var m=document.querySelector('video,audio');
     var art='';
     if(md&&md.artwork&&md.artwork.length){art=(md.artwork[md.artwork.length-1]||{}).src||(md.artwork[0]||{}).src||'';}
-    return {ok:!!md,title:md?md.title:'',artist:md?md.artist:'',art:art,
-      playing:!!m&&!m.paused&&!m.ended,pos:m?m.currentTime:0,dur:(m&&isFinite(m.duration))?m.duration:0};
+    var playing=!!m&&!m.paused&&!m.ended, pos=m?m.currentTime:0, dur=(m&&isFinite(m.duration))?m.duration:0;
+    // Zuverlässigster Abspielstatus über die MediaSession (von Apple/Spotify/YT gesetzt) —
+    // das <audio>-Element meldet bei DRM/MSE oft falsch „pausiert".
+    try{var pbs=navigator.mediaSession&&navigator.mediaSession.playbackState;if(pbs==='playing')playing=true;else if(pbs==='paused')playing=false;}catch(e){}
+    // Spotify: das <audio>-Element (MSE/DRM) liefert Zeit/Status unzuverlässig → aus der
+    // Player-Leiste lesen (Play/Pause-Aria-Label + Positions-/Dauer-Text "m:ss").
+    if(/spotify/.test(location.hostname)){
+      try{
+        var pp=document.querySelector('[data-testid="control-button-playpause"]');
+        if(pp){var lbl=(pp.getAttribute('aria-label')||'').toLowerCase(); if(/pause|pausieren/.test(lbl))playing=true; else if(/play|wiedergabe|abspielen/.test(lbl))playing=false;}
+        var toSec=function(t){t=(t||'').trim();if(!/^\\d+:\\d{2}/.test(t))return null;var p=t.split(':').map(Number);return p.length===3?p[0]*3600+p[1]*60+p[2]:p[0]*60+p[1];};
+        var ppos=document.querySelector('[data-testid="playback-position"]'), pdur=document.querySelector('[data-testid="playback-duration"]');
+        var sp=ppos?toSec(ppos.textContent):null, sd=pdur?toSec(pdur.textContent):null;
+        if(sp!=null)pos=sp; if(sd!=null&&sd>0)dur=sd;
+        if(!md){var t2=document.querySelector('[data-testid="context-item-info-title"], [data-testid="now-playing-widget"] a');var a2=document.querySelector('[data-testid="context-item-info-subtitles"] a, a[data-testid="context-item-info-artist"]');if(t2)return{ok:true,title:(t2.textContent||'').trim(),artist:a2?(a2.textContent||'').trim():'',art:art,playing:playing,pos:pos,dur:dur};}
+      }catch(e){}
+    }
+    // Apple Music: Zeit aus dem Fortschritts-Slider lesen (das <audio>-Element ist bei DRM
+    // unzuverlässig). Status kommt aus der MediaSession (oben). Lautstärke-Slider via valuemax>5 raus.
+    if(/music\\.apple\\.com/.test(location.hostname)){
+      try{
+        var st=[document],g=0,best=null;
+        while(st.length&&g++<30000){
+          var r=st.shift(),els;try{els=r.querySelectorAll('[role="slider"],input[type="range"]');}catch(e){els=null;}
+          if(els)for(var i=0;i<els.length;i++){var e=els[i];
+            var vmax=parseFloat(e.getAttribute&&e.getAttribute('aria-valuemax')),vnow=parseFloat(e.getAttribute&&e.getAttribute('aria-valuenow'));
+            if(!isNaN(vmax)&&vmax>5&&!isNaN(vnow)&&(!best||vmax>best.max))best={now:vnow,max:vmax};
+          }
+          var al;try{al=r.querySelectorAll('*');}catch(e){continue;}
+          for(var j=0;j<al.length;j++){if(al[j].shadowRoot)st.push(al[j].shadowRoot);}
+        }
+        if(best){pos=best.now;dur=best.max;}
+      }catch(e){}
+    }
+    return {ok:!!md,title:md?md.title:'',artist:md?md.artist:'',art:art,playing:playing,pos:pos,dur:dur};
   }catch(e){return {ok:false};}})()`;
   const cmdScript = (action) => `(function(){try{
     var host=location.hostname,m=document.querySelector('video,audio');
@@ -3334,6 +3465,31 @@ const music = (() => {
       if(t){fire(t);return true;}
       return false;
     }
+    // Den ECHTEN Play/Pause-Transport-Button finden: einen Play/Pause-Button, der im selben
+    // Cluster wie Skip-Buttons sitzt (so wird NIE ein Song-/Playlist-"Play" getroffen → kein
+    // Lied-Wechsel). Funktioniert über Shadow-DOM (Apple Music) und für alle Dienste.
+    function transportPlayPause(){
+      var ppRx=/^(play|pause|wiedergabe|pausieren|abspielen|anhalten|fortsetzen|wiedergeben|titel pausieren|titel abspielen)$/i;
+      var skipRx=/(n(ä|ae)chst|next|weiter|vorherig|previous|zur(ü|ue)ck|skip)/i;
+      var stack=[document],guard=0,cands=[];
+      while(stack.length&&guard++<30000){
+        var root=stack.shift();
+        var btns;try{btns=root.querySelectorAll('button,[role="button"]');}catch(e){btns=null;}
+        if(btns)for(var i=0;i<btns.length;i++){var l=((btns[i].getAttribute&&(btns[i].getAttribute('aria-label')||btns[i].getAttribute('title')))||'').trim();if(ppRx.test(l))cands.push(btns[i]);}
+        var all;try{all=root.querySelectorAll('*');}catch(e){continue;}
+        for(var j=0;j<all.length;j++){if(all[j].shadowRoot)stack.push(all[j].shadowRoot);}
+      }
+      // bevorzugt: Kandidat, dessen Vorfahre auch Skip-Buttons enthält (= Transport-Cluster)
+      for(var k=0;k<cands.length;k++){
+        var p=cands[k],hop=0;
+        while(p&&hop++<5){
+          var grp;try{grp=p.querySelectorAll&&p.querySelectorAll('button,[role="button"]');}catch(e){grp=null;}
+          if(grp&&grp.length>=2){var skip=false;for(var s=0;s<grp.length;s++){var sl=((grp[s].getAttribute&&(grp[s].getAttribute('aria-label')||grp[s].getAttribute('title')))||'');if(skipRx.test(sl)){skip=true;break;}}if(skip){fire(cands[k]);return true;}}
+          p=p.parentElement;
+        }
+      }
+      return false;
+    }
     // Tiefe Suche nach Button per Label (inc treffen, exc ausschließen — verhindert,
     // dass Vor-/Zurückspulen-Buttons („Skip Forward 15s") statt Titelwechsel klicken).
     function clickByLabel(inc, exc){
@@ -3351,9 +3507,14 @@ const music = (() => {
     var SEEK=/forward|backward|vorspul|r(ü|ue)ckspul|rewind|skip\s*\d|\d+\s*(s|sek|sec|second)|fast/i;
     var A=${JSON.stringify(action)};
     if(A==='playpause'){
-      if(host.indexOf('spotify')>=0&&clickDeep(['[data-testid="control-button-playpause"]']))return true;
-      if(host.indexOf('apple')>=0){ if(clickByLabel(/^(play|pause|wiedergabe|pausieren|abspielen)$/i)) return true; }
-      if(m){m.paused?m.play():m.pause();return true;}
+      // 1) eindeutige Transport-Buttons (Spotify/YT) — exakte Selektoren
+      if(clickDeep(['[data-testid="control-button-playpause"]','ytmusic-player-bar #play-pause-button','#play-pause-button']))return true;
+      // 2) Play/Pause im Transport-Cluster (mit Skip-Nachbarn) — Apple Music & generisch,
+      //    trifft NIE einen Song-Play-Button → kein Lied-Wechsel.
+      if(transportPlayPause())return true;
+      // 3) Failsafe: Medienelement umschalten (pause klappt immer)
+      if(m){try{m.paused?m.play():m.pause();}catch(e){}return true;}
+      return false;
     }else if(A==='next'){
       if(clickDeep(['[data-testid="control-button-skip-forward"]','button.web-chrome-playback-controls__next','[data-testid="playback-controls__skip-next"]','ytmusic-player-bar .next-button','tp-yt-paper-icon-button.next-button','.skipControl__next','button[aria-label="Nächster Titel"]','button[aria-label="Next"]','button[aria-label="Weiter"]','button[aria-label="Play Next"]','button[aria-label="Next track"]','button[aria-label="Nächsten Titel abspielen"]','button[aria-label="Vorspulen zum nächsten Titel"]']))return true;
       // strikt: nur echte „nächster Titel"-Beschriftungen, KEINE Spul-Buttons
@@ -3370,72 +3531,126 @@ const music = (() => {
   const mini = $('#mini-music');
   let npView = null;     // Webview, der gerade spielt
   let lastNp = null;
+  const posTrack = {};   // svc|title -> {pos, t}  → erkennt Wiedergabe an fortlaufender Zeit
 
+  // HARD-SWITCH: nur den AKTIVEN Dienst auslesen (andere sind pausiert) → Steuerung folgt dem Tab
   async function pollNowPlaying() {
-    const entries = Object.values(views);
-    if (entries.length === 0) { hideMini(); return; }
-    let best = null, bestView = null;
-    for (const v of entries) {
-      if (!v.wv) continue;
-      let np = null;
-      try { np = await v.wv.executeJavaScript(READ_NP, true); } catch { np = null; }
-      if (np && np.ok && (np.title || np.artist)) {
-        if (np.playing) { best = np; bestView = v.wv; break; }
-        if (!best) { best = np; bestView = v.wv; }
-      }
-    }
-    if (best) { npView = bestView; renderMini(best); }
-    else hideMini();
+    const v = current && views[current];
+    if (!v || !v.wv) { renderNow(null); return; }
+    let np = null;
+    try { np = await v.wv.executeJavaScript(READ_NP, true); } catch { np = null; }
+    if (np && np.ok && (np.title || np.artist)) {
+      // BULLETPROOF Abspielstatus: läuft die Position weiter → es SPIELT (egal was DOM/Element sagt).
+      // Behebt Apple, wo <audio>/mediaSession fälschlich „pausiert" melden.
+      try {
+        const key = current + '|' + (np.title || '');
+        const now = performance.now();
+        const prev = posTrack[key];
+        if (prev && (now - prev.t) < 4500) {
+          if (np.pos > prev.pos + 0.25) np.playing = true;                 // Zeit läuft → spielt
+          else if (np.pos <= prev.pos + 0.02 && !np.playing) np.playing = false; // steht still → pausiert
+        }
+        posTrack[key] = { pos: np.pos, t: now };
+      } catch {}
+      npView = v.wv; renderNow(np);
+    } else renderNow(null);
   }
 
-  function renderMini(np) {
+  const fmtTime = (s) => { s = Math.max(0, Math.floor(s || 0)); const m = Math.floor(s / 60); return m + ':' + String(s % 60).padStart(2, '0'); };
+
+  // Aktualisiert BEIDE Anzeigen: Topbar-Mini-Player UND den In-Panel-Now-Playing-Balken.
+  function renderNow(np) {
     lastNp = np;
-    mini.classList.remove('hidden');
-    $('#mm-title').textContent = np.title || 'Unbekannter Titel';
-    $('#mm-artist').textContent = np.artist || '';
-    const img = $('#mm-art-img');
-    if (np.art && img.dataset.src !== np.art) { img.dataset.src = np.art; img.src = np.art; img.classList.add('show'); }
-    if (!np.art) { img.classList.remove('show'); img.removeAttribute('src'); img.dataset.src = ''; }
-    const use = $('#mm-playpause').querySelector('use');
-    if (use) use.setAttribute('href', np.playing ? '#i-pause' : '#i-play');
-    const pct = np.dur > 0 ? Math.min(100, (np.pos / np.dur) * 100) : 0;
-    $('#mm-progress').style.width = pct + '%';
-  }
-  function hideMini() { mini.classList.add('hidden'); npView = null; }
-
-  async function miniCmd(action) {
-    const v = npView || (current && views[current] && views[current].wv);
-    if (!v) return;
-    let host = ''; try { host = new URL(v.getURL()).hostname; } catch {}
-    const isApple = /(^|\.)music\.apple\.com$/.test(host) || host.indexOf('apple') >= 0;
-    if (isApple && action !== 'playpause') {
-      // Apple Music reagiert NICHT zuverlässig auf DOM-Klicks/synthetische Tasten, aber auf die
-      // echten Multimedia-Tasten der Tastatur → exakt die auf Systemebene auslösen.
-      window.nova.music.hwMediaKey(action);
-      // zusätzlich den DOM-Versuch (schadet nicht, hilft falls hw nicht greift)
-      try { await v.executeJavaScript(cmdScript(action), true); } catch {}
-    } else {
-      // Spotify & Co: echten DOM-Button klicken (zuverlässig), Medientaste nur Fallback
-      let ok = false;
-      try { ok = await v.executeJavaScript(cmdScript(action), true); } catch {}
-      if (!ok && action !== 'playpause') {
-        let wcId = null; try { wcId = v.getWebContentsId(); } catch {}
-        if (wcId) window.nova.music.mediaKey({ wcId, key: action === 'next' ? 'MediaNextTrack' : 'MediaPreviousTrack' });
-        else window.nova.music.hwMediaKey(action);
-      }
+    if (!np) { mini.classList.add('hidden'); }
+    else {
+      mini.classList.remove('hidden');
+      $('#mm-title').textContent = np.title || 'Unbekannter Titel';
+      $('#mm-artist').textContent = np.artist || '';
+      const img = $('#mm-art-img');
+      if (np.art && img.dataset.src !== np.art) { img.dataset.src = np.art; img.src = np.art; img.classList.add('show'); }
+      if (!np.art) { img.classList.remove('show'); img.removeAttribute('src'); img.dataset.src = ''; }
+      const use = $('#mm-playpause').querySelector('use'); if (use) use.setAttribute('href', np.playing ? '#i-pause' : '#i-play');
+      $('#mm-progress').style.width = (np.dur > 0 ? Math.min(100, (np.pos / np.dur) * 100) : 0) + '%';
     }
-    setTimeout(pollNowPlaying, 350);
-    setTimeout(pollNowPlaying, 1100);
+    // In-Panel
+    const pt = $('#mp-title'), pa = $('#mp-artist'), pbar = $('#mp-bar-fill'), ptm = $('#mp-time');
+    const pimg = $('#mp-art-img'), pplay = $('#mp-play') && $('#mp-play').querySelector('use');
+    if (!pt) return;
+    if (!np) {
+      pt.textContent = 'Nichts spielt gerade'; pa.textContent = '';
+      if (pimg) { pimg.classList.remove('show'); pimg.removeAttribute('src'); pimg.dataset.src = ''; }
+      if (pbar) pbar.style.width = '0%'; if (ptm) ptm.textContent = '';
+      if (pplay) pplay.setAttribute('href', '#i-play');
+    } else {
+      pt.textContent = np.title || 'Unbekannter Titel'; pa.textContent = np.artist || '';
+      if (pimg) { if (np.art && pimg.dataset.src !== np.art) { pimg.dataset.src = np.art; pimg.src = np.art; pimg.classList.add('show'); } if (!np.art) { pimg.classList.remove('show'); pimg.removeAttribute('src'); pimg.dataset.src = ''; } }
+      if (pplay) pplay.setAttribute('href', np.playing ? '#i-pause' : '#i-play');
+      if (pbar) pbar.style.width = (np.dur > 0 ? Math.min(100, (np.pos / np.dur) * 100) : 0) + '%';
+      if (ptm) ptm.textContent = np.dur > 0 ? (fmtTime(np.pos) + ' / ' + fmtTime(np.dur)) : '';
+    }
   }
-  $('#mm-playpause').addEventListener('click', (e) => { e.stopPropagation(); miniCmd('playpause'); });
-  $('#mm-next').addEventListener('click', (e) => { e.stopPropagation(); miniCmd('next'); });
-  $('#mm-prev').addEventListener('click', (e) => { e.stopPropagation(); miniCmd('prev'); });
+  function hideMini() { mini.classList.add('hidden'); }
+
+  // Spielt gerade ein NORMALER Browser-Tab Ton (z.B. YouTube-Video)? Dann darf die GLOBALE
+  // System-Medientaste nicht benutzt werden — Chromium würde sie an diese MediaSession routen
+  // und das Video pausieren statt die Musik. Stattdessen gezielt an die Musik-Webview senden.
+  function anyOtherTabAudible() {
+    try { return state.tabs.some((t) => { try { return t.wv && t.wv.isCurrentlyAudible && t.wv.isCurrentlyAudible(); } catch { return false; } }); }
+    catch { return false; }
+  }
+
+  // Steuert IMMER den aktiven Dienst (Hard-Switch). Genutzt von Topbar-Mini UND In-Panel-Transport.
+  // Mehrfach-Klicks während des Umschaltens entkoppeln (verhindert Doppel-Skip/Race).
+  let cmdBusy = false;
+  async function command(action) {
+    const v = current && views[current] && views[current].wv;
+    if (!v || cmdBusy) return;
+    cmdBusy = true;
+    try {
+      let wcId = null; try { wcId = v.getWebContentsId(); } catch {}
+      let host = ''; try { host = new URL(v.getURL()).hostname; } catch {}
+      const isApple = /(^|\.)music\.apple\.com$/.test(host) || host.indexOf('apple') >= 0;
+      const mkey = action === 'next' ? 'MediaNextTrack' : action === 'prev' ? 'MediaPreviousTrack' : 'MediaPlayPause';
+      if (isApple) {
+        // Apple Music reagiert am zuverlässigsten auf die System-Medientaste. ABER: läuft daneben ein
+        // YouTube-Video o.ä., würde die GLOBALE Taste das Video treffen → dann gezielt an Apples Webview.
+        if (!anyOtherTabAudible()) window.nova.music.hwMediaKey(action);
+        else if (wcId) window.nova.music.mediaKey({ wcId, key: mkey });
+        else window.nova.music.hwMediaKey(action);
+      } else if (action === 'playpause') {
+        // Spotify / YouTube Music: exakter Transport-Button (kein Lied-Wechsel) bzw. Element-Toggle — rein im Musik-Webview.
+        let ok = false; try { ok = await v.executeJavaScript(cmdScript('playpause'), true); } catch {}
+        if (!ok && wcId) window.nova.music.mediaKey({ wcId, key: mkey });   // gezielt, NIE global → trifft kein anderes Tab
+      } else {
+        // Spotify / YouTube Music Skip: exakter Skip-Button im DOM, sonst GEZIELTE Medientaste (nie global).
+        let ok = false; try { ok = await v.executeJavaScript(cmdScript(action), true); } catch {}
+        if (!ok && wcId) window.nova.music.mediaKey({ wcId, key: mkey });
+        else if (!ok && !wcId && !anyOtherTabAudible()) window.nova.music.hwMediaKey(action);
+      }
+    } finally {
+      setTimeout(() => { cmdBusy = false; }, 450);   // kurze Sperre gegen Doppelauslösung
+    }
+    setTimeout(pollNowPlaying, 380);
+    setTimeout(pollNowPlaying, 1150);
+  }
+  // Topbar-Mini-Player
+  $('#mm-playpause').addEventListener('click', (e) => { e.stopPropagation(); command('playpause'); });
+  $('#mm-next').addEventListener('click', (e) => { e.stopPropagation(); command('next'); });
+  $('#mm-prev').addEventListener('click', (e) => { e.stopPropagation(); command('prev'); });
   mini.addEventListener('click', () => toggle(true));
+  // In-Panel-Transport
+  $('#mp-play').addEventListener('click', () => command('playpause'));
+  $('#mp-next').addEventListener('click', () => command('next'));
+  $('#mp-prev').addEventListener('click', () => command('prev'));
+  // Service-Strip scrollen
+  $('#music-tabs-left').addEventListener('click', () => { $('#music-services').scrollBy({ left: -140, behavior: 'smooth' }); });
+  $('#music-tabs-right').addEventListener('click', () => { $('#music-services').scrollBy({ left: 140, behavior: 'smooth' }); });
+  $('#music-services').addEventListener('scroll', () => {});
 
   setInterval(pollNowPlaying, 1500);
 
   // Bei Fenstergrößenänderung die Player-Webviews mitskalieren
-  window.addEventListener('resize', () => { if (open) sizeViews(); });
+  window.addEventListener('resize', () => { if (open) { sizeViews(); updateTabScroll(); } });
   return { toggle, show, applySettings, checkDrm, pollNowPlaying };
 })();
 
@@ -3446,7 +3661,8 @@ const claude = (() => {
   const PART = 'persist:nova-claude';
   const panel = $('#claude-panel');
   const body = $('#claude-body');
-  let wv = null, open = false;
+  let wv = null, open = false, busy = false, abortFlag = false;   // wv = NUTZER-Chat; busy = Agent plant; abortFlag = sofort stoppen
+  let agentWv = null;   // EIGENE Claude-Webview NUR für den Agenten (gleiches Login, eigener Chat) → Nutzer-Chat bleibt frei
 
   // ---- Andocken / Quick-Snap ----
   let dock = 'float';            // float | left | right | split-left | split-right
@@ -3540,6 +3756,20 @@ const claude = (() => {
     }
     return wv;
   }
+  // EIGENE, dauerhaft off-screen gerenderte Claude-Webview NUR für den Agenten (gleiche Session = geteiltes Login).
+  // So plant der Agent unabhängig, während der Nutzer den normalen Chat (wv) ganz normal weiterbenutzen kann.
+  function ensureAgentView() {
+    if (agentWv) return agentWv;
+    let host = document.getElementById('claude-agent-host');
+    if (!host) { host = el('div'); host.id = 'claude-agent-host'; document.body.appendChild(host); }
+    agentWv = document.createElement('webview');
+    agentWv.setAttribute('partition', PART);
+    agentWv.setAttribute('allowpopups', '');
+    agentWv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
+    agentWv.setAttribute('src', 'https://claude.ai/new');
+    host.appendChild(agentWv);
+    return agentWv;
+  }
   // claude.ai an die Panel-Breite anpassen: schmale Docks zoomen raus, damit das
   // Layout passt statt riesig/abgeschnitten zu wirken (wie der Spotify-Trick).
   // Liest IMMER die echte aktuelle Body-Breite — wird vom ResizeObserver getrieben,
@@ -3548,7 +3778,10 @@ const claude = (() => {
     if (!wv) return;
     const w = body.clientWidth;
     if (!w) return;
-    const z = Math.max(0.55, Math.min(1, w / 640));
+    let z = Math.max(0.55, Math.min(1, w / 640));
+    // In den schmalen Vollhöhen-Docks (ganz links/rechts) Text ~30% größer → besser lesbar.
+    // Split-View & frei schwebend bleiben passgenau.
+    if (dock === 'left' || dock === 'right') z = Math.min(1.15, z * 1.3);
     try { if (Math.abs((wv.getZoomFactor ? wv.getZoomFactor() : 0) - z) > 0.001) wv.setZoomFactor(z); } catch { try { wv.setZoomFactor(z); } catch {} }
   }
   // Electron-Compositing-Fix (schwarzer Bereich) — Höhe kurz anstoßen, dann zurück auf CSS 100%.
@@ -3565,12 +3798,23 @@ const claude = (() => {
     });
   }
   let agentOn = false;
+  let clCloseT = null;
   function toggle(force) {
     open = force != null ? force : !open;
-    panel.classList.toggle('hidden', !open);
     $('#btn-claude').classList.toggle('btn-claude-active', open);
-    if (open) { ensureView(); layoutDock(); setTimeout(repaint, 380); }
-    else { layoutDock(); if (agentOn) setAgent(false); }
+    if (open) {
+      clearTimeout(clCloseT);
+      panel.classList.remove('hidden', 'cl-closing');
+      ensureView(); layoutDock(); setTimeout(repaint, 380);
+    } else {
+      // sanftes Ausblenden statt abruptem Verschwinden
+      if (!panel.classList.contains('hidden')) {
+        panel.classList.add('cl-closing');
+        clearTimeout(clCloseT);
+        clCloseT = setTimeout(() => { panel.classList.add('hidden'); panel.classList.remove('cl-closing'); }, 240);
+      }
+      layoutDock(); if (agentOn) setAgent(false);
+    }
   }
   function close() { toggle(false); }
 
@@ -3622,6 +3866,25 @@ const claude = (() => {
     }catch(e){ return 'err'; }})()`;
   }
 
+  // Ist Claude bereit? (claude.ai geladen + eingeloggt → Eingabefeld vorhanden)
+  const READY = `(function(){try{ return !!(document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('[contenteditable="true"]')||document.querySelector('textarea')); }catch(e){ return false; }})()`;
+  // Hat der Editor noch (ungesendeten) Text? → unterscheidet „Senden fehlgeschlagen" von „gesendet, Claude antwortet noch"
+  const EDITOR_HAS_TEXT = `(function(){try{ var e=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('[contenteditable="true"]')||document.querySelector('textarea'); return e?((e.innerText||e.value||'').trim().length>3):false; }catch(e){ return false; }})()`;
+  // Pollt, bis der Editor existiert — verhindert „zu früh gefragt" beim allerersten Start
+  async function waitReady(maxMs, w) {
+    w = w || wv; if (!w) return false;
+    const tries = Math.ceil((maxMs || 22000) / 500);
+    let hits = 0;
+    for (let i = 0; i < tries; i++) {
+      if (abortFlag) return false;             // Stop-Button → nicht weiter warten
+      let ok = false; try { ok = await w.executeJavaScript(READY, true); } catch {}
+      // Editor muss 2× hintereinander da sein → kein transienter Treffer des ALTEN Chats während der Navigation
+      if (ok) { if (++hits >= 2) return true; } else hits = 0;
+      await sleep(500);
+    }
+    return false;
+  }
+
   const PROMPTS = {
     summary: 'Fasse den Inhalt dieser Webseite klar und strukturiert zusammen.',
     explain: 'Erkläre den Inhalt dieser Seite einfach und verständlich.',
@@ -3648,6 +3911,185 @@ const claude = (() => {
     else caLog('Senden fehlgeschlagen — Text liegt in der Zwischenablage (einfügen)', true);
   }
 
+  // Rohe Nachricht an Claude schleusen (z.B. vom NOVA Operator zur Planung genutzt)
+  async function ask(message) {
+    if (!open) toggle(true);
+    ensureView();
+    try { await navigator.clipboard.writeText(message); } catch {}
+    setTimeout(async () => { try { await wv.executeJavaScript(injectScript(message), true); } catch {} }, 600);
+  }
+
+  // Nachricht senden UND auf die nächste, stabile Antwort warten → Text zurückgeben.
+  // Genutzt vom NOVA Operator für die autonome Schritt-für-Schritt-Steuerung.
+  // Claude unsichtbar, aber GERENDERT halten (off-screen) — claude.ai mountet den Editor nur,
+  // wenn die Webview nicht display:none ist. So plant der Agent im Hintergrund, ohne das Chat-Panel aufzupoppen.
+  // Der Zustand bleibt über den ganzen Agent-Lauf bestehen (prepare → mehrere runOnce → release),
+  // damit der Editor zwischen den Schritten nicht ab- und neu aufgebaut wird.
+  function bgShow() { if (open) return; panel.classList.remove('hidden'); panel.classList.add('cl-bg'); }
+  function bgHide() { panel.classList.remove('cl-bg'); if (!open) panel.classList.add('hidden'); }
+  // Agent-Claude (EIGENE Webview) vorbereiten: frischen /new-Chat + auf Editor warten. true=bereit, false=nicht eingeloggt.
+  async function prepare() {
+    busy = true; abortFlag = false;
+    const fresh = !agentWv;
+    ensureAgentView();
+    if (fresh) {
+      await sleep(900);                      // frische Webview lädt /new selbst
+    } else {
+      let cur = ''; try { cur = agentWv.getURL() || ''; } catch {}
+      if (cur && !/about:blank/i.test(cur) && !/claude\.ai\/new(\/|$|\?)/.test(cur)) {
+        try { agentWv.src = 'https://claude.ai/new'; } catch {}
+        await sleep(1300);
+      }
+    }
+    let ready = await waitReady(30000, agentWv);
+    if (!ready && !abortFlag) {              // ein automatischer Wiederholversuch
+      try { agentWv.src = 'https://claude.ai/new'; } catch {}
+      await sleep(1600);
+      ready = await waitReady(22000, agentWv);
+    }
+    return ready;                            // nicht eingeloggt → operate meldet es; Nutzer loggt sich im normalen Chat ein (geteilte Session)
+  }
+  function release() {
+    busy = false;
+    // Agent-Chat (eigene Webview) aufräumen + nächsten frischen Chat vorwärmen — beeinflusst den Nutzer-Chat NICHT.
+    if (agentWv) {
+      deleteCurrentChat().catch(() => {}).then(() => { if (agentWv) { try { agentWv.src = 'https://claude.ai/new'; } catch {} } });
+    }
+  }
+  function abort() { abortFlag = true; }   // laufendes runOnce/waitReady sofort beenden (Stop-Button)
+  // Frischen NUTZER-Chat öffnen (beim Klick aufs Claude-Icon). Unabhängig vom Agenten.
+  function newChat() { if (!wv) return; try { wv.src = 'https://claude.ai/new'; } catch {} }
+
+  // Agent-Chat NEU LADEN (Kontext bleibt serverseitig) → Absturz-Recovery.
+  async function reloadChat() {
+    if (!agentWv) return false;
+    try { agentWv.reload(); } catch {}
+    await sleep(600);
+    return await waitReady(20000, agentWv);
+  }
+  // HARD-RESET: frischen Agent-Chat erzwingen → Selbstreparatur bei festgefahrenem/zu langem Chat.
+  async function freshChat() {
+    if (!agentWv) return false;
+    try { agentWv.src = 'https://claude.ai/new'; } catch {}
+    await sleep(1200);
+    return await waitReady(22000, agentWv);
+  }
+
+  // Aktuelle (Agent-)Konversation aufräumen — best-effort, SEHR vorsichtig: nur das Sidebar-Element mit
+  // GENAU dieser /chat/<id> wird angesteuert; Bestätigung nur über einen Button, dessen Text exakt „Löschen"/„Delete" ist.
+  // Scheitert leise (z. B. wenn die Sidebar in der schmalen Hintergrund-Webview nicht gerendert ist).
+  const OPEN_CHAT_MENU = `(function(){try{
+    var id=(location.pathname.split('/chat/')[1]||'').split(/[\\/?#]/)[0];
+    if(!id||id.length<8) return 'noid';
+    var a=document.querySelector('a[href*="/chat/'+id+'"]');
+    if(!a) return 'nolink';
+    var row=a.closest('li')||a.parentElement; if(!row) return 'norow';
+    try{ row.dispatchEvent(new MouseEvent('mouseover',{bubbles:true})); a.dispatchEvent(new MouseEvent('mouseover',{bubbles:true})); }catch(e){}
+    var btn=row.querySelector('button[aria-haspopup="menu"],button[aria-label*="option" i],button[aria-label*="men" i],button[data-testid*="menu" i]');
+    if(!btn) return 'nobtn';
+    btn.click(); return 'ok';
+  }catch(e){return 'err';}})()`;
+  const CLICK_DELETE_ITEM = `(function(){try{
+    var items=Array.prototype.slice.call(document.querySelectorAll('[role="menuitem"],[role="option"],[role="menuitemradio"]'));
+    var d=items.find(function(x){return x.offsetParent&&/l(ö|oe)schen|delete|entfernen/i.test(x.textContent||'');});
+    if(d){d.click();return true;} return false;
+  }catch(e){return false;}})()`;
+  const CONFIRM_DELETE = `(function(){try{
+    var scope=document.querySelector('[role="dialog"],[role="alertdialog"]')||document;
+    var btns=Array.prototype.slice.call(scope.querySelectorAll('button'));
+    var d=btns.find(function(x){return x.offsetParent&&/^\\s*(l(ö|oe)schen|delete|entfernen)\\s*$/i.test((x.textContent||'').trim());});
+    if(d){d.click();return true;} return false;
+  }catch(e){return false;}})()`;
+  async function deleteCurrentChat() {
+    if (!agentWv) return false;
+    try {
+      let url = ''; try { url = agentWv.getURL() || ''; } catch {}
+      if (!/claude\.ai\/chat\/[A-Za-z0-9-]{8,}/.test(url)) return false;   // nur echte, eindeutige Konversationen
+      let o = 'no'; try { o = await agentWv.executeJavaScript(OPEN_CHAT_MENU, true); } catch {}
+      if (o !== 'ok') return false;
+      await sleep(450);
+      let del = false; try { del = await agentWv.executeJavaScript(CLICK_DELETE_ITEM, true); } catch {}
+      if (!del) { try { await agentWv.executeJavaScript('(function(){try{document.body.click();}catch(e){}})()', true); } catch {} return false; }
+      await sleep(500);
+      try { await agentWv.executeJavaScript(CONFIRM_DELETE, true); } catch {}
+      await sleep(600);
+      return true;
+    } catch { return false; }
+  }
+
+  // ---- Modell-Auswahl auf claude.ai (best-effort über DOM; scheitert leise, Lauf geht weiter) ----
+  const GET_MODEL = `(function(){try{
+    var b=document.querySelector('button[data-testid="model-selector-dropdown"]')||Array.prototype.slice.call(document.querySelectorAll('button')).find(function(x){return /opus|sonnet|haiku|claude/i.test(x.textContent||'')&&x.offsetParent&&(x.textContent||'').trim().length<46;});
+    return b?(b.textContent||'').trim():'';
+  }catch(e){return '';}})()`;
+  const OPEN_MODEL_MENU = `(function(){try{
+    var b=document.querySelector('button[data-testid="model-selector-dropdown"]')||Array.prototype.slice.call(document.querySelectorAll('button')).find(function(x){return /opus|sonnet|haiku|claude/i.test(x.textContent||'')&&x.offsetParent&&(x.textContent||'').trim().length<46;});
+    if(!b)return 'no'; b.click(); return 'opened';
+  }catch(e){return 'err';}})()`;
+  function PICK_MODEL(want) {
+    return `(function(){try{
+      var want=${JSON.stringify(want)};
+      var items=Array.prototype.slice.call(document.querySelectorAll('[role="menuitem"],[role="option"],[role="menuitemradio"],a[role="menuitem"]'));
+      var hit=items.find(function(x){return x.offsetParent&&new RegExp(want,'i').test(x.textContent||'');});
+      if(hit){hit.click();return true;}
+      try{document.body.click();}catch(e){} return false;
+    }catch(e){return false;}})()`;
+  }
+  async function getModel() { try { return agentWv ? await agentWv.executeJavaScript(GET_MODEL, true) : ''; } catch { return ''; } }
+  // tier: 'haiku' | 'sonnet' | 'opus'  → true wenn (vermutlich) gewechselt/bereits aktiv (auf der Agent-Webview)
+  async function setModel(tier) {
+    if (!agentWv || !tier) return false;
+    try {
+      const cur = await getModel();
+      if (cur && new RegExp(tier, 'i').test(cur)) return true;       // schon das richtige Modell
+      let opened = 'no'; try { opened = await agentWv.executeJavaScript(OPEN_MODEL_MENU, true); } catch {}
+      if (opened !== 'opened') return false;
+      await sleep(480);
+      let picked = false; try { picked = await agentWv.executeJavaScript(PICK_MODEL(tier), true); } catch {}
+      await sleep(320);
+      return !!picked;
+    } catch { return false; }
+  }
+
+  // Läuft auf der EIGENEN Agent-Webview (agentWv) — der Nutzer-Chat (wv) bleibt unberührt.
+  async function runOnce(message) {
+    busy = true; abortFlag = false;
+    const w = ensureAgentView();
+    const ready = await waitReady(24000, w);  // erster Start: claude.ai lädt noch → Editor abwarten
+    if (!ready) return null;                   // nicht eingeloggt → operate meldet es
+    let prev = 0; try { const r0 = await w.executeJavaScript(READ_REPLY, true); prev = (r0 && r0.n) || 0; } catch {}
+    let inj = 'err';
+    for (let a = 0; a < 3 && inj !== 'ok'; a++) {   // Editor evtl. erst beim 2./3. Versuch wirklich bereit
+      try { inj = await w.executeJavaScript(injectScript(message), true); } catch {}
+      if (inj !== 'ok') await sleep(1300);
+    }
+    if (inj !== 'ok') return null;
+    // GEDULDIG: Solange Claude GENERIERT (working/streaming), NIE abbrechen — auch bei großen Prompts, die
+    // länger zum Starten brauchen. Nur bei echtem STILLSTAND (kein Generieren + keine neue Antwort) aufgeben.
+    let lastText = null, lastR = null, stable = 0, sawText = false, resent = false, idleMs = 0;
+    for (let i = 0; i < 150; i++) {            // Obergrenze ~105s — greift praktisch nur bei totalem Stillstand
+      if (abortFlag) { abortFlag = false; return null; }   // Stop-Button → sofort raus
+      await sleep(700);
+      let r = null; try { r = await w.executeJavaScript(READ_REPLY, true); } catch {}
+      const working = !!(r && r.working);
+      if (!r || !r.ok || r.n < prev + 1) {
+        if (working) { idleMs = 0; continue; }             // Claude arbeitet (Stop-Button) → geduldig weiter warten
+        idleMs += 700;
+        // ~8s wirklich still + Text klebt noch im Editor → einmal erneut absenden (Senden kam nicht an)
+        if (!resent && idleMs > 8000) { let h = false; try { h = await w.executeJavaScript(EDITOR_HAS_TEXT, true); } catch {} if (h) { resent = true; try { await w.executeJavaScript(injectScript(message), true); } catch {} idleMs = 0; } }
+        if (idleMs > 28000) return null;                   // ~28s totaler Stillstand → aufgeben (planStep repariert)
+        continue;
+      }
+      lastR = r; idleMs = 0;
+      if (r.text) sawText = true;
+      // Solange Claude noch tippt (streaming/working), NIE zurückgeben → keine abgeschnittene Antwort.
+      if (working || r.streaming) { stable = 0; lastText = r.text; continue; }
+      if (sawText && r.text && r.text === lastText) { if (++stable >= 2) return r; }
+      else { stable = 0; lastText = r.text; }
+    }
+    return lastR;
+  }
+
   // ---- Schritt 3: autonome Recherche (experimentell, über claude.ai-DOM) ----
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const MAX_STEPS = 4;       // höchstens 4 Seiten öffnen, dann zwingend abschließen
@@ -3658,16 +4100,27 @@ const claude = (() => {
   // ist (Auto-Umbruch zerreißt URLs, Keywords kleben an). codes = Inline-Code (<code>, VERBATIM,
   // beste Quelle), hrefs = verlinkte URLs, raw = textContent (ohne Zero-Width), text = innerText (Stabilität).
   const READ_REPLY = `(function(){try{
+    // Arbeitet Claude gerade? (Stop-Button / data-is-streaming) — UNABHÄNGIG davon, ob die Nachricht schon gerendert ist.
+    var working=false; try{
+      working = !!document.querySelector('[data-is-streaming="true"]')
+        || !!document.querySelector('button[data-testid="stop-button"]')
+        || !!document.querySelector('button[aria-label="Stop response"]')
+        || !!document.querySelector('button[aria-label="Antwort stoppen"]')
+        || !!document.querySelector('button[aria-label="Generierung stoppen"]')
+        || !!document.querySelector('button[aria-label*="stop response" i]')
+        || !!document.querySelector('button[aria-label*="antwort stopp" i]');
+    }catch(e){}
     var nodes = document.querySelectorAll('div.font-claude-message');
     if(!nodes.length) nodes = document.querySelectorAll('[data-testid="assistant-message"], .prose, [data-is-streaming]');
-    if(!nodes.length) return { ok:false, text:'', raw:'', hrefs:[], codes:[], n:0 };
+    if(!nodes.length) return { ok:false, working:working, text:'', raw:'', hrefs:[], codes:[], n:0 };
     var last = nodes[nodes.length-1];
     var hrefs = [];
     last.querySelectorAll('a[href]').forEach(function(a){ var h=a.getAttribute('href')||''; if(/^https?:\\/\\//i.test(h)) hrefs.push(h); });
     var codes = [];
     last.querySelectorAll('code').forEach(function(c){ var t=(c.textContent||'').replace(/[\\u200B-\\u200D\\uFEFF\\u00AD]/g,'').trim(); if(t) codes.push(t); });
-    return { ok:true, text:(last.innerText||'').trim(), raw:(last.textContent||'').replace(/[\\u200B-\\u200D\\uFEFF\\u00AD]/g,'').replace(/\\s+/g,' ').trim(), hrefs:hrefs, codes:codes, n: nodes.length };
-  }catch(e){ return { ok:false, text:'', raw:'', hrefs:[], codes:[], n:0 }; }})()`;
+    var streaming=working; try{ var sn=last.closest&&last.closest('[data-is-streaming]'); if(sn&&sn.getAttribute('data-is-streaming')==='true') streaming=true; }catch(e){}
+    return { ok:true, working:working, streaming:streaming, text:(last.innerText||'').trim(), raw:(last.textContent||'').replace(/[\\u200B-\\u200D\\uFEFF\\u00AD]/g,'').replace(/\\s+/g,' ').trim(), hrefs:hrefs, codes:codes, n: nodes.length };
+  }catch(e){ return { ok:false, working:false, text:'', raw:'', hrefs:[], codes:[], n:0 }; }})()`;
 
   function setRunUI(on) {
     $('#ca-stop').classList.toggle('hidden', !on);
@@ -3785,7 +4238,10 @@ const claude = (() => {
     agentLoop(pc + 1, step + 1, myRun);
   }
 
-  $('#btn-claude').addEventListener('click', () => toggle());
+  $('#btn-claude').addEventListener('click', () => {
+    // Eigene Agent-Webview → der Nutzer-Chat ist jederzeit frei nutzbar, auch wenn der Agent läuft.
+    const willOpen = !open; toggle(); if (willOpen) setTimeout(newChat, 60);   // beim Öffnen IMMER frischer Chat
+  });
   $('#claude-close').addEventListener('click', () => toggle(false));
   $('#claude-reload').addEventListener('click', () => { if (wv) wv.reload(); });
   $('#claude-popout').addEventListener('click', () => { createTab('https://claude.ai/new'); toggle(false); });
@@ -3862,7 +4318,770 @@ const claude = (() => {
     if (state.settings.claudeDock) dock = state.settings.claudeDock;
     if (dock === 'bottom') dock = 'right';   // alter Wert → "unten" gibt es nicht mehr
   }
-  return { toggle, close, applySettings, relayout, setDock, isOpen: () => open };
+  return { toggle, close, applySettings, relayout, setDock, isOpen: () => open, ask, runOnce, pickUrl, prepare, release, abort, reloadChat, freshChat, setModel, getModel };
+})();
+
+/* ============================================================ NOVA Operator (AI-Operable Web — Phase 1) */
+// DOM-Intelligence-Layer + sichtbare Bedienung: analysiert die aktive Seite strukturell,
+// markiert interaktive Elemente sichtbar auf der Seite und führt Aktionen mit Fokus-Animation aus.
+const operator = (() => {
+  const panel = $('#operator-panel');
+  let open = false, model = null, fillIdx = null;
+
+  // ---- KI-Agenten-Bühne: eigenes, nicht anklickbares Fenster rechts (nur die KI bedient es) ----
+  const stage = $('#agent-stage');
+  let stageWv = null, stageMode = false, stageUrl = '', stageTitle = '';
+  let stageSide = 'right', stageCollapsed = false;   // andockbar links/rechts + einklappbar
+  let userContext = [], secrets = {};   // Nutzer-Antworten (an Claude) + sichere Daten (NICHT an Claude, nur lokal eingefügt)
+  let checklist = [];                    // Live-Aufgabenliste [{text, done}], von Claude gepflegt
+  let degraded = false;                  // nach Hard-Reset (frischer Chat ohne Historie) → Prompts wieder VOLL senden
+  const MODEL_TIERS = ['haiku', 'sonnet', 'opus'];   // aufsteigende Stärke (Eskalation bei Problemen)
+  function ensureStage() {
+    if (stageWv) return stageWv;
+    const wv = document.createElement('webview');
+    wv.setAttribute('partition', PARTITION);     // gleiche Session wie der Nutzer → KI kann eingeloggte Seiten nutzen
+    wv.setAttribute('allowpopups', '');
+    if (state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
+    wv.setAttribute('src', NEWTAB);
+    const setUrl = (u) => { stageUrl = u || stageUrl; const e = $('#as-url'); if (e) e.textContent = prettyUrl(stageUrl); };
+    wv.addEventListener('did-navigate', (e) => { setUrl(e.url); });
+    wv.addEventListener('did-navigate-in-page', (e) => { if (e.isMainFrame) setUrl(e.url); });
+    wv.addEventListener('page-title-updated', (e) => { stageTitle = e.title || stageTitle; });
+    $('#as-viewport').insertBefore(wv, $('#as-scrim'));   // Webview hinter den Scrim (Scrim blockt Nutzer-Klicks)
+    stageWv = wv;
+    return wv;
+  }
+  function prettyUrl(u) {
+    if (!u || /^nova:/i.test(u)) return 'neuer Tab';
+    try { const x = new URL(u); return x.hostname.replace(/^www\./, '') + (x.pathname !== '/' ? x.pathname : ''); } catch { return u; }
+  }
+  // Bühne andocken — exakt bündig mit dem Inhaltsbereich (#view-area) → gleiche Oberkante wie der Tab.
+  // Seite (links/rechts) + eingeklappt berücksichtigen; Inhalt zur jeweiligen Seite zusammenschieben.
+  function stageDock() {
+    const va = $('#view-area'); if (!va) return;
+    const r = va.getBoundingClientRect();
+    stage.classList.toggle('as-left', stageSide === 'left');
+    stage.classList.toggle('as-collapsed', stageCollapsed);
+    stage.style.top = Math.round(r.top) + 'px';
+    // An den INHALTSBEREICH andocken (nicht ans Fenster) → liegt NICHT über der Favoritenleiste links.
+    if (stageSide === 'left') { stage.style.left = Math.round(r.left) + 'px'; stage.style.right = 'auto'; }
+    else { stage.style.left = 'auto'; stage.style.right = Math.round(window.innerWidth - r.right) + 'px'; }
+    va.style.paddingLeft = ''; va.style.paddingRight = '';
+    const w = stage.offsetWidth + 8;
+    if (stageSide === 'left') va.style.paddingLeft = w + 'px';
+    else va.style.paddingRight = w + 'px';
+  }
+  // Layout ändert sich animiert (Favoritenleiste ein-/ausklappen) → Bühne pro Frame MITwandern,
+  // statt erst nach der Sidebar-Animation zu springen. Trackt #view-area über ~0,42 s.
+  let stageAnimRaf = 0;
+  function relayoutAnimated() {
+    if (!stageMode || stage.classList.contains('hidden')) { return; }
+    const va = $('#view-area'); if (!va) return;
+    try { cancelAnimationFrame(stageAnimRaf); } catch {}
+    const t0 = performance.now();
+    const tick = (t) => {
+      const r = va.getBoundingClientRect();
+      stage.style.top = Math.round(r.top) + 'px';
+      if (stageSide === 'left') { stage.style.left = Math.round(r.left) + 'px'; stage.style.right = 'auto'; }
+      else { stage.style.left = 'auto'; stage.style.right = Math.round(window.innerWidth - r.right) + 'px'; }
+      if (t - t0 < 420) stageAnimRaf = requestAnimationFrame(tick);
+      else stageDock();   // exakter Abschluss inkl. Padding
+    };
+    stageAnimRaf = requestAnimationFrame(tick);
+  }
+  function setStageSide(side) {
+    if (side !== 'left' && side !== 'right') return;
+    stageSide = side;
+    try { state.settings.agentStageSide = side; window.nova.settings.set({ agentStageSide: side }); } catch {}
+    stageDock();
+  }
+  function setStageCollapsed(on) {
+    stageCollapsed = !!on;
+    const cb = $('#as-collapse'); if (cb) cb.title = stageCollapsed ? 'Ausklappen' : 'Einklappen';
+    stageDock();
+  }
+  function openStage() {
+    ensureStage();
+    stageMode = true;
+    stageCollapsed = false;                                  // immer ausgeklappt starten
+    if (state.settings && state.settings.agentStageSide === 'left') stageSide = 'left';   // zuletzt gewählte Seite
+    stage.classList.remove('hidden', 'closing');
+    document.body.classList.add('as-open');
+    requestAnimationFrame(stageDock);
+    setStageStep('Initialisiere …'); setStageSub('verbinde …'); setStageProgress(0);
+  }
+  function closeStage() {
+    stageMode = false;
+    // BEIDE Seiten räumen (links ODER rechts angedockt) → Inhalt zieht sich wieder gerade (noch mit as-open-Transition = smooth)
+    const va = $('#view-area'); if (va) { va.style.paddingLeft = ''; va.style.paddingRight = ''; }
+    stage.classList.add('closing');
+    setTimeout(() => {
+      stage.classList.add('hidden'); stage.classList.remove('closing');
+      document.body.classList.remove('as-open');
+      stage.style.left = ''; stage.style.right = ''; stage.style.top = '';   // Positionen zurücksetzen
+    }, 320);
+  }
+  function stageReset() {                          // frischer „neuer Tab" für einen neuen Lauf
+    ensureStage();
+    try { stageWv.src = NEWTAB; } catch {}
+    stageUrl = NEWTAB; stageTitle = '';
+    const e = $('#as-url'); if (e) e.textContent = 'neuer Tab';
+  }
+  function setStageStep(t) { const e = $('#as-step-tx'); if (e) e.textContent = t || ''; }
+  function setStageSub(t) { const e = $('#as-sub'); if (e) e.textContent = t || ''; }
+  function setStageState(t) { const e = $('#as-state'); if (e) e.textContent = t || ''; }
+  function setStageProgress(p) { const e = $('#as-bar'); if (e) e.style.width = Math.max(0, Math.min(100, p)) + '%'; }
+  function stageRunningUI(on) { stage.classList.toggle('as-running', on); }
+
+  // ---- Live-Checkliste (von Claude gepflegt, im Bühnen-HUD sichtbar) ----
+  // Plan-/Checklisten-Zeilen aus Claudes Antwort lesen: „[ ] Schritt" / „[x] erledigt"
+  function parseChecklist(r) {
+    const txt = (r && typeof r === 'object') ? (r.text || r.raw || '') : (r || '');
+    const items = [];
+    txt.split('\n').forEach((ln) => {
+      const m = /^\s*(?:[-*]\s*)?\[\s*([ xX✓✔•-]?)\s*\]\s*(.+?)\s*$/.exec(ln);
+      if (m) { const t = m[2].replace(/\s+/g, ' ').trim().slice(0, 90); if (t) items.push({ done: /[xX✓✔]/.test(m[1]), text: t }); }
+    });
+    return items;
+  }
+  function sameTask(a, b) {
+    const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9äöüß ]/g, '').replace(/\s+/g, ' ').trim();
+    a = norm(a); b = norm(b);
+    if (!a || !b) return false;
+    return a === b || (a.length > 8 && b.length > 8 && (a.includes(b) || b.includes(a))) || a.slice(0, 16) === b.slice(0, 16);
+  }
+  function setChecklist(items) {
+    if (!items || !items.length) return;
+    if (!checklist.length) { checklist = items; renderChecklist(-1); return; }
+    if (items.length >= checklist.length) {
+      // umfassendere/gleich lange Liste → übernehmen, aber bereits erledigte Punkte bleiben erledigt
+      items.forEach((ni) => { const old = checklist.find((c) => c.done && sameTask(c.text, ni.text)); if (old) ni.done = true; });
+      checklist = items;
+    } else {
+      // kürzere Liste (oft nur partieller/gestreamter Read) → KEINE Punkte verlieren, nur done-Status übernehmen
+      items.forEach((ni) => { const m = checklist.find((c) => sameTask(c.text, ni.text)); if (m && ni.done) m.done = true; });
+    }
+    renderChecklist(-1);
+  }
+  function renderChecklist(activeIdx) {
+    const box = $('#as-check'); if (!box) return;
+    const list = $('#as-check-list');
+    box.classList.toggle('hidden', !checklist.length);
+    if (!checklist.length) return;
+    list.innerHTML = '';
+    checklist.forEach((it, i) => {
+      const row = el('div', 'as-ck-row' + (it.done ? ' done' : '') + (i === activeIdx ? ' active' : ''));
+      const mark = el('span', 'as-ck-mark');
+      if (it.done) mark.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>';
+      row.append(mark, el('span', 'as-ck-tx', it.text));
+      list.appendChild(row);
+    });
+    const done = checklist.filter((i) => i.done).length;
+    const cnt = $('#as-check-count'); if (cnt) cnt.textContent = done + '/' + checklist.length;
+  }
+  // ersten offenen Punkt als „aktiv" markieren (visuelles Feedback während eines Schritts)
+  function markActiveStep() { const idx = checklist.findIndex((i) => !i.done); renderChecklist(idx); }
+
+  // Ziel-Webview/-URL/-Navigation: im Agent-Modus die Bühne, sonst der aktive Tab (manuelles Panel)
+  function opWv() { return stageMode ? stageWv : (activeTab() && activeTab().wv); }
+  function opUrl() { return stageMode ? stageUrl : (activeTab() && activeTab().url); }
+  function opNavigate(url) {
+    if (stageMode) { try { stageWv.src = url; } catch {} stageUrl = url; }
+    else { const t = activeTab(); if (t) { try { navigate(t, url); } catch {} } }
+  }
+
+  // ---- Nutzer-Eingabe (fehlende Infos / Login-Daten / Auswahl) ----
+  // Sensible Anfrage? → Wert wird NICHT an Claude gesendet, sondern lokal gehalten + per Platzhalter eingefügt.
+  // Liefert einen Platzhalter-Schlüssel oder null (dann normale, an Claude weitergegebene Antwort).
+  function secretKeyFor(q) {
+    q = (q || '').toLowerCase();
+    if (/passwor[dt]|kennwort/.test(q)) return 'passwort';
+    if (/e-?mail/.test(q)) return 'email';
+    if (/\bpin\b|\btan\b|2fa|verifiz|bestätigungscode|einmalcode|\bcode\b/.test(q)) return 'code';
+    if (/benutzer|nutzername|user\s*name|\blogin\b|konto(name)?/.test(q)) return 'benutzer';
+    if (/kreditkart|karten|\biban\b|kontonummer|bankverbindung/.test(q)) return 'zahlung';
+    if (/telefon|handy|mobil|rufnummer/.test(q)) return 'telefon';
+    if (/adresse|anschrift|stra(ß|ss)e|\bplz\b|wohnort|postleitzahl/.test(q)) return 'adresse';
+    if (/geburts|\bsvnr\b|sozialvers|ausweis|personalausweis/.test(q)) return 'persoenlich';
+    return null;
+  }
+  function maskFor(q) { return /passwor[dt]|kennwort|\bpin\b|\btan\b|geheim|secret|\bcode\b|2fa/i.test(q || ''); }
+  // {{schlüssel}}-Platzhalter im FÜLLE-Wert lokal durch die echten, sicher gehaltenen Daten ersetzen.
+  function applySecrets(val) {
+    if (!val) return val;
+    for (const k of Object.keys(secrets)) val = val.replace(new RegExp('\\{\\{\\s*' + k + '\\s*\\}\\}', 'ig'), secrets[k]);
+    if (/\{\{\s*(?:geheim|secret)\s*\}\}/i.test(val)) { const any = secrets.passwort != null ? secrets.passwort : secrets[Object.keys(secrets)[0]]; if (any != null) val = val.replace(/\{\{\s*(?:geheim|secret)\s*\}\}/ig, any); }
+    return val;
+  }
+  function askUser(question, mask) {
+    return new Promise((resolve) => {
+      const ov = $('#as-ask'), inp = $('#as-ask-input');
+      $('#as-ask-q').textContent = question;
+      inp.type = mask ? 'password' : 'text'; inp.value = '';
+      ov.classList.remove('hidden');
+      setTimeout(() => { try { inp.focus(); } catch {} }, 60);
+      const finish = (val) => {
+        ov.classList.add('hidden');
+        $('#as-ask-ok').removeEventListener('click', ok);
+        $('#as-ask-cancel').removeEventListener('click', cancel);
+        inp.removeEventListener('keydown', key);
+        resolve(val);
+      };
+      const ok = () => finish(inp.value.trim() || null);
+      const cancel = () => finish(null);
+      const key = (e) => { if (e.key === 'Enter') { e.preventDefault(); ok(); } else if (e.key === 'Escape') { e.preventDefault(); cancel(); } };
+      $('#as-ask-ok').addEventListener('click', ok);
+      $('#as-ask-cancel').addEventListener('click', cancel);
+      inp.addEventListener('keydown', key);
+    });
+  }
+
+  // ---- Ergebnis-Karte: vom Agenten recherchierte Infos schön formatiert ausgeben ----
+  function escHtml(s) { return (s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function formatResult(text) {
+    let t = escHtml((text || '').trim()).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+    const lines = t.split(/\n/); let html = '', inUl = false;
+    for (const ln of lines) {
+      const m = /^\s*(?:[-•*]|\d+\.)\s+(.*)$/.exec(ln);
+      if (m) { if (!inUl) { html += '<ul>'; inUl = true; } html += '<li>' + m[1] + '</li>'; }
+      else { if (inUl) { html += '</ul>'; inUl = false; } if (ln.trim()) html += '<p>' + ln + '</p>'; }
+    }
+    if (inUl) html += '</ul>';
+    return html || '<p>(kein Ergebnis)</p>';
+  }
+  function showResult(goal, text) {
+    const card = $('#agent-result');
+    $('#ar-goal').textContent = goal || '';
+    $('#ar-body').innerHTML = formatResult(text);
+    card._text = text || '';
+    card.classList.remove('hidden');
+  }
+
+  // ---- In die Seite injizierter Scanner: semantisches Modell + sichtbare Markierung ----
+  const SCAN = `(function(){try{
+    var prev=document.getElementById('__nova_op_layer'); if(prev)prev.remove();
+    function vis(el){try{var r=el.getBoundingClientRect();if(r.width<6||r.height<6)return false;var s=getComputedStyle(el);return s.visibility!=='hidden'&&s.display!=='none'&&parseFloat(s.opacity||'1')>0.05;}catch(e){return false;}}
+    function lbl(el){var t=(el.getAttribute&&(el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.getAttribute('title')))||el.value||(el.innerText||'')||el.name||(el.getAttribute&&el.getAttribute('alt'))||'';return (t||'').replace(/\\s+/g,' ').trim().slice(0,64);}
+    var sel='a[href],button,[role="button"],input:not([type="hidden"]),textarea,select,[contenteditable="true"],[onclick],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="switch"]';
+    var raw=Array.prototype.slice.call(document.querySelectorAll(sel)).filter(vis);
+    var els=raw.filter(function(e){return !raw.some(function(o){return o!==e&&o.contains(e);});}).slice(0,240);
+    window.__novaOpTargets=els;
+    function kindOf(e){var t=e.tagName.toLowerCase();var ty=(e.type||'').toLowerCase();if(t==='input'){if(ty==='password')return 'password';if(ty==='search'||/search|suche|query/i.test((e.name||'')+(e.placeholder||'')+(e.getAttribute('aria-label')||'')))return 'search';if(ty==='checkbox'||ty==='radio')return 'toggle';if(ty==='submit'||ty==='button')return 'button';return 'input';}if(t==='textarea'||e.isContentEditable)return 'input';if(t==='select')return 'select';if(t==='a'||e.getAttribute('role')==='link')return 'link';if(e.getAttribute('role')==='checkbox'||e.getAttribute('role')==='switch')return 'toggle';return 'button';}
+    var targets=els.map(function(e,i){var r=e.getBoundingClientRect();return {i:i,kind:kindOf(e),label:lbl(e)||('<'+e.tagName.toLowerCase()+'>'),x:Math.round(r.left),y:Math.round(r.top),w:Math.round(r.width),h:Math.round(r.height)};});
+    var txt=(document.body.innerText||'').toLowerCase().slice(0,20000);
+    var hasPw=targets.some(function(t){return t.kind==='password';});
+    var hasSearch=targets.some(function(t){return t.kind==='search';});
+    var nInput=targets.filter(function(t){return t.kind==='input'||t.kind==='password';}).length;
+    var tables=document.querySelectorAll('table').length;
+    var pt='Allgemeine Seite';
+    if(hasPw&&nInput<=5)pt='Login / Anmeldung';
+    else if(/in den warenkorb|add to cart|checkout|warenkorb|jetzt kaufen/.test(txt))pt='Online-Shop';
+    else if(tables>0)pt='Daten / Tabelle';
+    else if(document.querySelector('article')||txt.length>3500)pt='Artikel / Lesen';
+    else if(hasSearch)pt='Suche';
+    else if(nInput>=3)pt='Formular';
+    if(!window.__novaOpQuiet){
+    var L=document.createElement('div');L.id='__nova_op_layer';L.style.cssText='position:fixed;inset:0;z-index:2147483646;pointer-events:none;font:700 11px system-ui,Segoe UI,sans-serif;';
+    var COL={search:'#22d3ee',password:'#fb7185',input:'#a78bfa',select:'#a78bfa',link:'#7c4dff',button:'#f471b5',toggle:'#34d399'};
+    var boxes=[];
+    els.forEach(function(e,i){var c=COL[kindOf(e)]||'#f471b5';var b=document.createElement('div');b.style.cssText='position:fixed;border:1.5px solid '+c+';border-radius:5px;box-shadow:0 0 8px '+c+'66,inset 0 0 8px '+c+'22;box-sizing:border-box;will-change:transform,top,left;';var g=document.createElement('div');g.textContent=i;g.style.cssText='position:absolute;left:-1px;top:-14px;background:'+c+';color:#08080f;padding:0 4px;border-radius:4px;line-height:14px;';b.appendChild(g);L.appendChild(b);boxes.push({b:b,e:e});});
+    document.documentElement.appendChild(L);
+    window.__novaOpBoxes=boxes;
+    // Markierungen beim Scrollen/Resize live aus den ECHTEN Positionen nachziehen; nicht
+    // sichtbare ausblenden — so bleiben sie ausgerichtet und Elemente erscheinen beim Scrollen.
+    function reposition(){var vh=innerHeight,vw=innerWidth;for(var k=0;k<boxes.length;k++){var o=boxes[k];var r;try{r=o.e.getBoundingClientRect();}catch(e){o.b.style.display='none';continue;}if(r.width<3||r.height<3||r.bottom<-2||r.top>vh+2||r.right<-2||r.left>vw+2){o.b.style.display='none';}else{o.b.style.display='block';o.b.style.left=r.left+'px';o.b.style.top=r.top+'px';o.b.style.width=r.width+'px';o.b.style.height=r.height+'px';}}}
+    reposition();
+    if(window.__novaOpScroll){try{removeEventListener('scroll',window.__novaOpScroll,true);removeEventListener('resize',window.__novaOpScroll);}catch(e){}}
+    var raf=0;window.__novaOpScroll=function(){if(raf)return;raf=requestAnimationFrame(function(){raf=0;reposition();});};
+    addEventListener('scroll',window.__novaOpScroll,true);addEventListener('resize',window.__novaOpScroll);
+    }
+    var bodyTxt='';try{bodyTxt=((document.querySelector('main,article,[role="main"]')||document.body).innerText||'').replace(/\\s+/g,' ').trim().slice(0,1500);}catch(e){}
+    return {ok:true,pageType:pt,title:document.title||'',url:location.href,tables:tables,targets:targets,text:bodyTxt};
+  }catch(e){return {ok:false,error:String(e)};}})()`;
+
+  const CLEAR = `(function(){try{var p=document.getElementById('__nova_op_layer');if(p)p.remove();if(window.__novaOpScroll){removeEventListener('scroll',window.__novaOpScroll,true);removeEventListener('resize',window.__novaOpScroll);window.__novaOpScroll=null;}}catch(e){}})()`;
+
+  function execJs(action, idx, value) {
+    return `(function(){try{
+      var els=window.__novaOpTargets||[];var el=els[${idx}];if(!el)return {ok:false,error:'Element nicht mehr da'};
+      try{el.scrollIntoView({block:'center',inline:'center'});}catch(e){}
+      var r=el.getBoundingClientRect();
+      var ring=document.createElement('div');ring.style.cssText='position:fixed;left:'+(r.left-3)+'px;top:'+(r.top-3)+'px;width:'+(r.width+6)+'px;height:'+(r.height+6)+'px;border:2.5px solid #f471b5;border-radius:8px;z-index:2147483647;pointer-events:none;box-shadow:0 0 0 4px rgba(244,113,181,.35),0 0 24px #f471b5;transition:opacity .35s;';document.documentElement.appendChild(ring);setTimeout(function(){ring.style.opacity='0';},700);setTimeout(function(){ring.remove();},1100);
+      var A=${JSON.stringify(action)};
+      if(A==='click'){['pointerover','pointerenter','pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(t){try{el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window}));}catch(e){}});try{el.click();}catch(e){}return {ok:true};}
+      if(A==='fill'){var v=${JSON.stringify(value || '')};try{el.focus();}catch(e){}
+        if(el.isContentEditable){try{document.execCommand('selectAll',false,null);document.execCommand('insertText',false,v);}catch(e){try{el.textContent=v;}catch(_){}}}
+        else{
+          var proto=el.tagName==='TEXTAREA'?window.HTMLTextAreaElement.prototype:window.HTMLInputElement.prototype;
+          var d=Object.getOwnPropertyDescriptor(proto,'value');
+          var setV=function(val){try{if(d&&d.set)d.set.call(el,val);else el.value=val;}catch(e){try{el.value=val;}catch(_){}}};
+          setV('');el.dispatchEvent(new Event('input',{bubbles:true}));   // erst leeren (React-Tracker zurücksetzen)
+          setV(v);
+          try{el.dispatchEvent(new InputEvent('input',{bubbles:true,data:v,inputType:'insertText'}));}catch(e){el.dispatchEvent(new Event('input',{bubbles:true}));}
+          el.dispatchEvent(new Event('change',{bubbles:true}));
+          try{el.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,key:'a'}));el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true,key:'a'}));}catch(e){}
+          if((el.value||'')!==v){try{setV(v);el.dispatchEvent(new Event('input',{bubbles:true}));}catch(e){}}   // 1× Retry
+        }
+        var got=el.isContentEditable?((el.innerText||el.textContent||'').trim().length>0):((el.value||'').length>0);
+        return {ok:true,filled:got};}
+      if(A==='enter'){try{el.focus();['keydown','keypress','keyup'].forEach(function(t){el.dispatchEvent(new KeyboardEvent(t,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true}));});var f=el.form;if(f){f.requestSubmit?f.requestSubmit():f.submit();}}catch(e){}return {ok:true};}
+      return {ok:false,error:'unbekannte Aktion'};
+    }catch(e){return {ok:false,error:String(e)};}})()`;
+  }
+
+  function log(msg, warn) {
+    const box = $('#op-log'); if (!box) return;
+    const row = el('div', 'op-log-row' + (warn ? ' warn' : ''));
+    row.appendChild(el('span', 'op-dot'));
+    row.appendChild(el('span', null, msg));
+    box.appendChild(row);
+    while (box.childElementCount > 8) box.firstChild.remove();
+    box.scrollTop = box.scrollHeight;
+  }
+
+  const KIND_LABEL = { search: 'Suche', password: 'Passwort', input: 'Eingabe', select: 'Auswahl', link: 'Link', button: 'Button', toggle: 'Schalter' };
+
+  function renderModel(m) {
+    const meta = $('#op-meta'); meta.innerHTML = '';
+    const head = el('div', 'op-pagetype');
+    head.appendChild(icon('i-operator'));
+    head.appendChild(el('b', null, m.pageType));
+    meta.appendChild(head);
+    const counts = {};
+    for (const t of m.targets) counts[t.kind] = (counts[t.kind] || 0) + 1;
+    const chips = el('div', 'op-chips');
+    for (const [k, n] of Object.entries(counts)) {
+      const c = el('span', 'op-chip op-k-' + k, (KIND_LABEL[k] || k) + ' · ' + n);
+      chips.appendChild(c);
+    }
+    if (m.tables) chips.appendChild(el('span', 'op-chip', 'Tabellen · ' + m.tables));
+    meta.appendChild(chips);
+
+    const body = $('#op-body'); body.innerHTML = '';
+    // Elemente gruppiert auflisten (anklickbar → markieren + ausführen)
+    const order = ['search', 'input', 'password', 'select', 'toggle', 'button', 'link'];
+    const groups = {};
+    for (const t of m.targets) (groups[t.kind] = groups[t.kind] || []).push(t);
+    for (const k of order) {
+      const arr = groups[k]; if (!arr || !arr.length) continue;
+      body.appendChild(el('div', 'op-group-h', KIND_LABEL[k] || k));
+      for (const t of arr) {
+        const row = el('div', 'op-row op-k-' + k);
+        row.appendChild(el('span', 'op-idx', String(t.i)));
+        row.appendChild(el('span', 'op-rowlabel', t.label));
+        if (k === 'input' || k === 'search' || k === 'password') {
+          const fb = el('button', 'op-act', 'Ausfüllen'); fb.addEventListener('click', (e) => { e.stopPropagation(); startFill(t); });
+          row.appendChild(fb);
+        } else {
+          const cb = el('button', 'op-act', 'Klicken'); cb.addEventListener('click', (e) => { e.stopPropagation(); doAction('click', t.i, null, t.label); });
+          row.appendChild(cb);
+        }
+        row.addEventListener('mouseenter', () => focusTarget(t.i));
+        body.appendChild(row);
+      }
+    }
+  }
+
+  async function focusTarget(idx) {
+    const wv = opWv(); if (!wv) return;
+    try { await wv.executeJavaScript(`(function(){try{var e=(window.__novaOpTargets||[])[${idx}];if(!e)return;var r=e.getBoundingClientRect();var x=document.getElementById('__nova_op_focus');if(!x){x=document.createElement('div');x.id='__nova_op_focus';x.style.cssText='position:fixed;z-index:2147483647;pointer-events:none;border:2px solid #fff;border-radius:7px;box-shadow:0 0 16px #f471b5,0 0 0 3px rgba(244,113,181,.5);transition:all .12s;';document.documentElement.appendChild(x);}x.style.left=(r.left-2)+'px';x.style.top=(r.top-2)+'px';x.style.width=(r.width+4)+'px';x.style.height=(r.height+4)+'px';x.style.opacity='1';clearTimeout(window.__novaOpFt);window.__novaOpFt=setTimeout(function(){x.style.opacity='0';},1200);}catch(e){}})()`, true); } catch {}
+  }
+
+  function startFill(t) {
+    const v = prompt('Text für „' + (t.label || 'Feld') + '" eingeben:', '');
+    if (v == null) return;
+    doAction('fill', t.i, v, t.label);
+  }
+
+  // Aktion ausführen (ohne Re-Scan) → liefert ok zurück. Bei fill: merkt, ob der Wert wirklich im Feld steht.
+  let lastFillFilled = true;
+  async function execAction(action, idx, value, label) {
+    const wv = opWv(); if (!wv) { log('Keine Seite aktiv', true); return false; }
+    let r = null; try { r = await wv.executeJavaScript(execJs(action, idx, value), true); } catch (e) { r = { ok: false, error: String(e) }; }
+    if (action === 'fill') lastFillFilled = !!(r && r.filled);
+    if (r && r.ok) log((action === 'fill' ? (r.filled ? 'Ausgefüllt' : 'Ausgefüllt (Feld blieb leer?)') : action === 'enter' ? 'Bestätigt ↵' : 'Geklickt') + ': [' + idx + '] ' + (label || '').slice(0, 34));
+    else log('Aktion fehlgeschlagen: ' + ((r && r.error) || '?'), true);
+    return !!(r && r.ok);
+  }
+  // Manuelle Einzel-Aktion (Buttons im Panel): ausführen + Seite neu verstehen
+  async function doAction(action, idx, value, label) {
+    await execAction(action, idx, value, label);
+    setTimeout(analyze, 900);
+  }
+
+  async function analyze() {
+    const wv = opWv();
+    if (!wv || !isWebUrl(opUrl())) { log('Bitte zuerst eine Webseite öffnen', true); return; }
+    log('Analysiere Seite …');
+    // In der KI-Bühne KEINE sichtbaren Markierungs-Boxen zeichnen (nur das Modell bauen) — saubere Ansicht
+    if (stageMode) { try { await wv.executeJavaScript('window.__novaOpQuiet=true', true); } catch {} }
+    let m = null; try { m = await wv.executeJavaScript(SCAN, true); } catch (e) { m = null; }
+    if (!m || !m.ok) { log('Analyse fehlgeschlagen' + (m && m.error ? ': ' + m.error : ''), true); return; }
+    model = m; renderModel(m);
+    log('Verstanden: ' + m.pageType + ' — ' + m.targets.length + ' Elemente markiert');
+  }
+
+  function clearOverlay() { const wv = opWv(); if (wv) { try { wv.executeJavaScript(CLEAR, true).catch(() => {}); } catch {} } }
+
+  function layout() {
+    const va = $('#view-area');
+    if (open) { panel.classList.remove('hidden'); va.style.paddingRight = '380px'; }
+    else { panel.classList.add('hidden'); va.style.paddingRight = ''; clearOverlay(); }
+  }
+  function toggle(force) {
+    open = force != null ? force : !open;
+    if (open && stageMode) closeStage();   // manuelles Panel & KI-Bühne schließen sich gegenseitig aus
+    $('#btn-operator').classList.toggle('active-tool', open);
+    layout();
+    if (open) setTimeout(analyze, 420);   // nach dem Andocken (Seite hat finale Breite) analysieren
+  }
+
+  // ---- Phase 2: Autonome Ausführung (Claude plant Schritt für Schritt, NOVA führt sichtbar aus) ----
+  let opRunning = false;
+  const MAX_OP_STEPS = 12;   // Standard
+  // Max. Schritte aus Einstellungen: 0 / 'unlimited' → unbegrenzt (Infinity), sonst Zahl, Fallback 12
+  function maxSteps() {
+    const v = state.settings && state.settings.agentMaxSteps;
+    if (v === 0 || v === 'unlimited' || v === '0') return Infinity;
+    const n = parseInt(v, 10);
+    return (n && n > 0) ? n : MAX_OP_STEPS;
+  }
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function setRunUI(on) {
+    opRunning = on;
+    const b = $('#op-analyze'); b.classList.toggle('op-running', on);
+    const u = b.querySelector('use'); if (u) u.setAttribute('href', on ? '#i-x' : '#i-operator');
+    b.title = on ? 'Stoppen' : 'Seite verstehen / Ausführen';
+  }
+  function stop() { setRunUI(false); try { claude.abort(); } catch {} }   // laufende Claude-Anfrage sofort abbrechen
+
+  // Claudes Antwort in EINE Aktion übersetzen
+  function parseAction(r) {
+    // r ist das volle READ_REPLY-Objekt {text, raw, hrefs, codes}. Für die Aktions-Erkennung den
+    // zeilenerhaltenden innerText nehmen und PLAN-/Checklisten-Zeilen ([ ]/[x]) ENTFERNEN —
+    // sonst löst z. B. „[ ] Öffne die Seite" eine Navigate-Aktion aus. URLs kommen via pickUrl (hrefs).
+    const base = (r && typeof r === 'object') ? (r.text || r.raw || '') : (r || '');
+    const txt = base.split('\n').filter((ln) => !/^\s*(?:[-*]\s*)?\[\s*[ xX✓✔•-]?\s*\]/.test(ln)).join('\n');
+    if (/FERTIG\s*:/i.test(txt)) return { done: true, msg: (txt.replace(/[\s\S]*FERTIG\s*:?/i, '') || '').trim() };
+    // Seitenwechsel: explizites Schlüsselwort → URL robust aus href/code/raw ziehen (innerText zerreißt URLs)
+    if (/(?:[ÖO]FFNE|OEFFNE|OPEN|GEHE(?:\s*ZU)?|NAVIGIERE(?:\s*ZU)?|BESUCHE)/i.test(txt)) {
+      let url = null;
+      if (r && typeof r === 'object' && claude.pickUrl) { try { url = claude.pickUrl(r); } catch {} }
+      if (!url) {
+        const nv = /(?:[ÖO]FFNE|OEFFNE|OPEN|GEHE(?:\s*ZU)?|NAVIGIERE(?:\s*ZU)?|BESUCHE)\s*:?\s*(https?:\/\/[^\s"'»]+|www\.[^\s"'»]+|[a-z0-9.-]+\.[a-z]{2,}(?:\/[^\s"'»]*)?)/i.exec(txt);
+        if (nv) { let u = nv[1].replace(/[)\].,;"'»]+$/, ''); if (!/^https?:\/\//i.test(u)) u = 'https://' + u; if (/^https?:\/\/[^\s/]+\.[^\s/]{2,}/i.test(u)) url = u; }
+      }
+      if (url) return { action: 'navigate', url };
+    }
+    // Frage an den Nutzer (fehlende Info / Login-Daten / Auswahl).
+    // innerText bevorzugen (behält Zeilenumbrüche), am LETZTEN "FRAGE:" splitten, erste Zeile / bis "?" nehmen.
+    if (/(?:FRAGE|FRAG|ASK|EINGABE)\s*:/i.test(txt)) {
+      const src = (r && typeof r === 'object' && r.text && /(?:FRAGE|FRAG|ASK|EINGABE)\s*:/i.test(r.text)) ? r.text : txt;
+      const parts = src.split(/(?:FRAGE|FRAG|ASK|EINGABE)\s*:/i);
+      let q = (parts[parts.length - 1] || '').split('\n')[0].trim();
+      const qm = q.indexOf('?');
+      if (qm > 0 && qm < 180) q = q.slice(0, qm + 1);          // saubere Frage bis zum Fragezeichen
+      q = q.slice(0, 200).replace(/^["„»']|["""»']$/g, '').trim();
+      if (q) return { action: 'ask', question: q };
+    }
+    let m = /(?:F[ÜU]LLE|FUELLE|FILL|TIPPE|TYPE)\s*\[?\s*(\d+)\s*\]?\s*[:=]?\s*["„»']([^"""»'\n]*)/i.exec(txt);
+    if (m) return { action: 'fill', idx: +m[1], value: m[2] };
+    m = /(?:F[ÜU]LLE|FUELLE|FILL|TIPPE|TYPE)\s*\[?\s*(\d+)\s*\]?\s+(.+)/i.exec(txt);
+    if (m) return { action: 'fill', idx: +m[1], value: (m[2] || '').replace(/^["„»']|["""»']$/g, '').trim() };
+    // Formular abschicken / Eingabe bestätigen (z. B. nach Login-Feldern, wenn kein Button erkennbar ist)
+    let en = /(?:ENTER|ABSCHICKEN|ABSENDEN|BEST[ÄA]TIGEN?|SUBMIT|EINGABETASTE|RETURN)\s*\[?\s*(\d+)?\s*\]?/i.exec(txt);
+    if (en) return { action: 'enter', idx: en[1] != null ? +en[1] : null };
+    m = /(?:KLICK|CLICK|DR[ÜU]CKE|TIPPE AUF|W[ÄA]HLE)\s*\[?\s*(\d+)\s*\]?/i.exec(txt);
+    if (m) return { action: 'click', idx: +m[1] };
+    m = /\[(\d+)\]/.exec(txt);
+    if (m) return { action: 'click', idx: +m[1] };
+    return null;
+  }
+  // brief=true: kompakter Prompt (nur Seitenzustand) — spart Tokens & hält den Chat schlank.
+  // brief=false (Schritt 1 / nach Selbstreparatur im frischen Chat): volle, eigenständige Anleitung.
+  function planPrompt(goal, brief) {
+    const noText = (l) => !l || /^<[a-z]+>$/.test(l);
+    const useful = model.targets.filter((t) => t.kind === 'link' ? !noText(t.label) : true).slice(0, brief ? 55 : 75);
+    const compact = useful.map((t) => `[${t.i}] ${t.kind}: ${noText(t.label) ? '(ohne Text — ' + t.kind + ')' : t.label.slice(0, 48)}`).join('\n');
+    const empty = !model.targets.length;
+    const hint = empty
+      ? `\nKEINE Webseite geladen (Startseite). Beginne mit ÖFFNE: <url> (z. B. Google-Suche), um das Ziel zu erreichen.\n`
+      : `\nElemente (Index, Typ, Beschriftung):\n${compact}\n`;
+    const txtCap = brief ? 1100 : 1500;
+    const pageText = (model.text && model.text.length > 40) ? `\nSeitentext (Auszug):\n"""\n${model.text.slice(0, txtCap)}\n"""\n` : '';
+    const ctx = userContext.length ? `\nNutzer-Infos:\n${userContext.map((c) => '- ' + c.q + ' → ' + c.a).join('\n')}\n` : '';
+    const skeys = Object.keys(secrets);
+    const sec = skeys.length ? `\nSicher hinterlegt (echte Werte siehst du NIE — als Platzhalter einsetzen): ${skeys.map((k) => '{{' + k + '}}').join(', ')}.\n` : '';
+    const clBlock = checklist.length ? `\nCheckliste:\n${checklist.map((c) => (c.done ? '[x] ' : '[ ] ') + c.text).join('\n')}\n` : '';
+    const state = `Seite: ${model.pageType} — ${model.title}\nURL: ${model.url}\n` + hint + pageText + ctx + sec + clBlock;
+    if (brief) {
+      return `Nächster Schritt zum Ziel "${goal}".\n` + state
+        + `\nGib ZUERST den aktualisierten PLAN-Block aus (alle Punkte, erledigte mit [x]), DANN GENAU EINE Aktion (KLICK/FÜLLE/ENTER/ÖFFNE/FRAGE/FERTIG).`;
+    }
+    return `Du steuerst einen echten Browser über NOVA — du siehst die Seite NICHT, nur dieses Modell.\nZiel des Nutzers: "${goal}"\n` + state
+      + `\nGib ZUERST den aktualisierten PLAN-Block aus (Zeilen "[ ] offen" / "[x] erledigt", erledigte Schritte abhaken), DANN GENAU EINE nächste Aktion. Aktionen:\n`
+      + `KLICK [index]\n`
+      + `FÜLLE [index] "text"   (sensible Daten als Platzhalter {{email}} / {{passwort}})\n`
+      + `ENTER [index]   (Formular abschicken / bestätigen, wenn kein Weiter-Button gelistet ist)\n`
+      + `ÖFFNE: https://...   (Webseite ansteuern/wechseln, z. B. https://www.google.com/search?q=...)\n`
+      + `FRAGE: <kurze Frage>   (NUR wenn dir eine Info fehlt: Login-Daten/Auswahl/Eingabe)\n`
+      + `FERTIG: <Ergebnis>\n`
+      + `Regeln: Schritt für Schritt Richtung Ziel. Fülle ein Feld IMMER ZUERST mit FÜLLE aus, BEVOR du Weiter/Anmelden klickst — nie „Weiter" bei leerem Feld. `
+      + `Nach dem Ausfüllen schickt NOVA Login-Felder oft automatisch ab; sonst Button klicken oder ENTER [index]. Fehlt eine Info → FRAGE. `
+      + `Bei Recherche-Zielen: lies den Textauszug, gib bei FERTIG eine AUSFÜHRLICHE, formatierte Zusammenfassung (Stichpunkte "- ", **fett**).`;
+  }
+  // Router (mit Opus): wählt das effizienteste Modell + erstellt die Checkliste
+  function routerPrompt(goal) {
+    return `Du bist der Planer eines autonomen Browser-Agenten (NOVA). Aufgabe des Nutzers: "${goal}".\n`
+      + `1) Wähle das SCHNELLSTE Modell, das die EINZELSCHRITTE schafft — die meisten Schritte sind einfache Klicks/Eingaben:\n`
+      + `   haiku = einfache Navigation/Suche; sonnet = normale mehrstufige Abläufe (Standard); opus NUR wenn wirklich anspruchsvolles Schlussfolgern nötig ist. Im Zweifel SONNET (schnell + zuverlässig). Bei schwierigen Stellen wechselt NOVA automatisch hoch.\n`
+      + `2) Erstelle eine KURZE Checkliste der nötigen Schritte (3–7 Punkte).\n`
+      + `Antworte GENAU in diesem Format, sonst nichts:\nMODELL: <haiku|sonnet|opus>\nPLAN:\n[ ] erster Schritt\n[ ] zweiter Schritt`;
+  }
+
+  // Plan-Anfrage mit SELBSTREPARATUR. build(brief) liefert den Prompt.
+  // a0: normal senden · a1: Chat neu laden + erneut · a2/a3: HARD-RESET (frischer Chat) + VOLLER eigenständiger
+  // Prompt → die Checkliste trägt den Fortschritt, also macht Claude im frischen Chat nahtlos weiter.
+  async function planStep(build) {
+    for (let a = 0; a < 4 && opRunning; a++) {
+      if (a === 1) { setStageStep('Claude neu laden …'); setStageState('repariert'); try { await claude.reloadChat(); } catch {} }
+      else if (a >= 2) { setStageStep('Selbstreparatur: frischer Chat …'); setStageState('repariert'); log('Selbstreparatur: starte frischen Chat (Fortschritt bleibt via Checkliste)', true); degraded = true; try { await claude.freshChat(); } catch {} }
+      if (!opRunning) break;
+      let r = null; try { r = await claude.runOnce(build(a < 2)); } catch {}   // ab a>=2: voller eigenständiger Prompt
+      if (r && (r.raw || r.text)) return r;
+      if (!opRunning) break;
+      log('Claude antwortete nicht (Versuch ' + (a + 1) + ') …', true);
+      await sleep(700);
+    }
+    return null;
+  }
+
+  async function operate(goal) {
+    if (opRunning) { stop(); log('Gestoppt'); return; }
+    if (!opWv()) { log('Kein Ziel-Fenster', true); return; }
+    setRunUI(true);
+    userContext = []; secrets = {}; checklist = []; degraded = false; renderChecklist(-1);   // frischer Lauf
+    log('🤖 Autonome Steuerung: ' + goal.slice(0, 48));
+    setStageSub('verbinde mit Claude …'); setStageState('denkt');
+    log('Verbinde mit Claude (Hintergrund) …');
+    let ready = false; try { ready = await claude.prepare(); } catch {}
+    if (!opRunning) { claude.release(); return; }
+    if (!ready) { log('Claude nicht bereit — bitte links im Panel in Claude anmelden', true); setStageStep('Claude nicht bereit — bitte in Claude anmelden'); setStageState('Login nötig'); claude.release(); stop(); return; }
+    let finishedResult = null, lastFilledIdx = null, succeeded = false;
+    const MAX = maxSteps();                    // aus Einstellungen (0/„unbegrenzt" → Infinity)
+    const unlimited = !isFinite(MAX);
+
+    // ---- Router: Opus klassifiziert die Aufgabe → wählt das schnellste passende Modell + Checkliste ----
+    let tier = 'sonnet';
+    setStageStep('Plane Aufgabe (Opus) …'); setStageState('plant');
+    try {
+      await claude.setModel('opus');
+      const rr = await planStep(() => routerPrompt(goal));
+      if (rr) {
+        const rt = rr.text || rr.raw || '';
+        const mm = /MODELL?\s*:\s*(haiku|sonnet|opus)/i.exec(rt);
+        if (mm) tier = mm[1].toLowerCase();
+        setChecklist(parseChecklist(rr));
+      }
+    } catch {}
+    if (!opRunning) { claude.release(); secrets = {}; stop(); return; }
+    log('Modell: ' + tier + (checklist.length ? ' · ' + checklist.length + ' Schritte geplant' : ''));
+    setStageSub('Modell: ' + tier);
+    try { await claude.setModel(tier); } catch {}
+
+    // Eskalation: bei wiederholten Problemen auf ein stärkeres Modell wechseln (Kontext bleibt im selben Chat)
+    let fails = 0;
+    const escalate = () => {
+      const i = MODEL_TIERS.indexOf(tier);
+      if (i >= 0 && i < MODEL_TIERS.length - 1) {
+        tier = MODEL_TIERS[i + 1]; fails = 0;
+        log('Mehrere Probleme → wechsle zu stärkerem Modell: ' + tier, true);
+        setStageSub('Modell: ' + tier); try { claude.setModel(tier); } catch {}
+        return true;
+      }
+      return false;
+    };
+
+    try {
+      for (let step = 0; step < MAX && opRunning; step++) {
+        setStageProgress(unlimited ? Math.min(92, 12 + step * 7) : (step / MAX) * 100);
+        markActiveStep();
+        if (isWebUrl(opUrl())) {
+          setStageStep('Verstehe die Seite …'); setStageState('liest');
+          await analyze();                     // echte Webseite: verstehen + markieren
+        } else {
+          // Startseite / leerer Tab → kein Webinhalt: Claude soll selbst eine Seite öffnen
+          model = { ok: true, pageType: 'NOVA-Startseite (keine Webseite geladen)', title: 'Startseite', url: opUrl() || 'nova://newtab', targets: [] };
+          clearOverlay();
+          log('Keine Webseite geladen — plane Seitenaufruf …');
+        }
+        if (!opRunning) break;
+        if (!model) { log('Seite nicht lesbar — gestoppt', true); break; }
+        log('Denke nach … (Schritt ' + (step + 1) + (unlimited ? '' : '/' + MAX) + ')');
+        setStageStep('Plane Schritt ' + (step + 1) + ' …'); setStageState('denkt'); setStageSub('Modell: ' + tier);
+        const reply = await planStep((canBrief) => planPrompt(goal, canBrief && step > 0 && !degraded));
+        if (!opRunning) break;
+        if (!reply) {                          // Claude mehrfach nicht erreichbar → eskalieren statt sofort aufgeben
+          if (escalate()) { step--; continue; }
+          log('Keine Antwort von Claude — gestoppt', true); setStageStep('Keine Antwort von Claude'); break;
+        }
+        const cl = parseChecklist(reply); if (cl.length) setChecklist(cl);   // Checkliste live von Claude pflegen
+        const act = parseAction(reply);
+        if (!act) {
+          fails++;
+          if (fails >= 2 && escalate()) { step--; continue; }
+          if (fails >= 3) { log('Keine Aktion erkannt — gestoppt', true); setStageStep('Keine klare Aktion'); break; }
+          log('Keine Aktion erkannt — versuche weiter …', true); continue;
+        }
+        if (act.done) { succeeded = true; finishedResult = (act.msg || '').trim(); log('Ziel erreicht ✓ ' + finishedResult.slice(0, 80)); setStageStep('Ziel erreicht ✓'); setStageState('fertig'); setStageProgress(100); checklist.forEach((c) => { c.done = true; }); renderChecklist(-1); break; }
+        fails = 0;                             // gültige Aktion → Fehlerzähler zurücksetzen
+        if (act.action === 'navigate') {
+          log('Öffne andere Seite: ' + act.url.slice(0, 52));
+          setStageStep('Öffne ' + prettyUrl(act.url)); setStageState('öffnet');
+          opNavigate(act.url);
+          await sleep(2400);                   // Laden abwarten, dann oben neu verstehen
+          continue;
+        }
+        if (act.action === 'ask') {
+          const sk = secretKeyFor(act.question);
+          log('Frage an Nutzer: ' + act.question.slice(0, 60));
+          setStageStep('Wartet auf deine Eingabe …'); setStageState('fragt');
+          const ans = await askUser(act.question, maskFor(act.question));
+          if (!opRunning) break;
+          if (ans == null) { log('Eingabe abgebrochen — gestoppt', true); setStageStep('Eingabe abgebrochen'); break; }
+          if (sk) { secrets[sk] = ans; userContext.push({ q: act.question, a: '«' + sk + ' sicher hinterlegt»' }); log('Sichere Daten hinterlegt (gehen NICHT an Claude)'); }
+          else { userContext.push({ q: act.question, a: ans }); log('Antwort erhalten: ' + ans.slice(0, 40)); }
+          step--;                              // Frage verbraucht keinen Schritt
+          await sleep(200);
+          continue;
+        }
+        // Eingabe bestätigen / Formular abschicken (ENTER) — Feld aus Index oder zuletzt ausgefülltem
+        if (act.action === 'enter') {
+          const ei = (act.idx != null) ? act.idx : lastFilledIdx;
+          if (ei == null || ei < 0 || ei >= model.targets.length) { log('ENTER ohne gültiges Feld — gestoppt', true); break; }
+          const et = model.targets[ei];
+          setStageStep('Bestätige Eingabe ↵'); setStageState('handelt');
+          await execAction('enter', ei, null, et && et.label);
+          await sleep(1600);                   // Seite reagieren/navigieren lassen
+          continue;
+        }
+        if (act.idx == null || act.idx < 0 || act.idx >= model.targets.length) { log('Ungültiger Index ' + act.idx + ' — gestoppt', true); break; }
+        const t = model.targets[act.idx];
+        setStageStep((act.action === 'fill' ? 'Tippe in „' : 'Klicke „') + (t && t.label || '').slice(0, 40) + '"'); setStageState('handelt');
+        // Platzhalter {{email}}/{{passwort}}/… lokal durch die sicher gehaltenen Daten ersetzen (kommen nie zu Claude)
+        const fillVal = applySecrets(act.value);
+        const ok = await execAction(act.action, act.idx, fillVal, t && t.label);
+        if (!ok) { log('Aktion scheiterte — gestoppt', true); break; }
+        if (act.action === 'fill') {
+          lastFilledIdx = act.idx;
+          if (!lastFillFilled) { log('Feld blieb leer — kein Enter, plane neu', true); }
+          // Auto-Enter NUR wenn das Feld wirklich befüllt wurde (sonst würde „Weiter" auf ein leeres Feld gehen).
+          // Greift bei Suchfeld, Passwort sowie Login-Kennung (E-Mail/Telefon/Benutzer) wenn (noch) kein Passwortfeld da ist.
+          const hasPwField = model.targets.some((x) => x.kind === 'password');
+          const idLike = t && t.kind === 'input' && /e-?mail|mail|telefon|phone|handy|mobil|nutzername|benutzer|\buser\b|login/i.test((t.label || '') + ' ' + (model.pageType || ''));
+          const autoEnter = lastFillFilled && t && (t.kind === 'search' || t.kind === 'password' || (idLike && !hasPwField));
+          if (autoEnter) { await sleep(450); await execAction('enter', act.idx, null, t.label); }
+        }
+        await sleep(1200);                     // Seite reagieren/navigieren lassen
+      }
+    } catch (e) { log('Fehler: ' + (e && e.message), true); }
+    claude.release();                          // Claude-Hintergrund-Webview wieder verstecken
+    secrets = {};                              // sichere Daten sofort nach dem Lauf aus dem Speicher entfernen
+    stop();
+    if (stageMode) {
+      stageRunningUI(false);
+      const res = (finishedResult || '').trim();
+      const cur = $('#as-step-tx') ? $('#as-step-tx').textContent : '';
+      const stoppedByUser = /gestoppt|abgebrochen|eingabe abgebrochen/i.test(cur);
+      if (succeeded && res && res.length > 12) {       // echtes Ergebnis → schön als Karte + Bühne schließen
+        setStageState('fertig'); setStageStep('Ergebnis bereit ✓'); showResult(goal, res);
+        setTimeout(() => { if (!opRunning && stageMode) closeStage(); }, 1800);
+      } else if (succeeded) {                          // erledigt ohne langen Text → kurz anzeigen + schließen
+        setStageState('fertig'); setStageStep(res ? ('Fertig: ' + res.slice(0, 70)) : 'Erledigt ✓');
+        setTimeout(() => { if (!opRunning && stageMode) closeStage(); }, 3200);
+      } else if (stoppedByUser) {                      // vom Nutzer gestoppt → offen lassen
+        setStageState('gestoppt');
+      } else {                                         // festgefahren → EHRLICH anzeigen, NICHT automatisch schließen
+        setStageState('Problem'); setStageStep('Konnte nicht abschließen — Stopp drücken oder erneut starten');
+        log('Lauf festgefahren — nicht abgeschlossen', true);
+      }
+    }
+  }
+
+  // Von außen gestartet (Agent-Button auf der Startseite): KI-Bühne öffnen + Ziel autonom erledigen.
+  // Claude plant unsichtbar im Hintergrund — der Nutzer sieht NUR die animierte Agenten-Bühne.
+  function run(goal) {
+    goal = (goal || '').trim(); if (!goal) return;
+    if (opRunning) stop();
+    if (open) toggle(false);                   // manuelles Operator-Panel zu (Bühne ist die Agent-Ansicht)
+    openStage();
+    stageReset();
+    stageRunningUI(true);
+    $('#op-goal').value = goal;
+    log('Agent-Modus gestartet: ' + goal.slice(0, 60));
+    setStageStep('Agent gestartet: ' + goal.slice(0, 44));
+    setTimeout(() => operate(goal), 500);      // kurz warten, bis die Bühnen-Webview „neuer Tab" geladen hat
+  }
+
+  $('#btn-operator').addEventListener('click', () => toggle());
+  $('#op-close').addEventListener('click', () => toggle(false));
+  $('#op-rescan').addEventListener('click', () => { if (opRunning) { stop(); log('Gestoppt'); } else analyze(); });
+  $('#op-analyze').addEventListener('click', () => { if (opRunning) { stop(); log('Gestoppt'); return; } const g = $('#op-goal').value.trim(); if (g) operate(g); else analyze(); });
+  $('#op-goal').addEventListener('keydown', (e) => { if (e.key === 'Enter') { const g = $('#op-goal').value.trim(); if (g) operate(g); } });
+
+  // Checkliste ein-/ausklappen
+  $('#as-check-toggle').addEventListener('click', () => $('#as-check').classList.toggle('collapsed'));
+  // KI-Bühne ein-/ausklappen (schmale Seitenleiste)
+  $('#as-collapse').addEventListener('click', (e) => { e.stopPropagation(); setStageCollapsed(true); });
+  $('#as-rail').addEventListener('click', () => setStageCollapsed(false));
+  // KI-Bühne: Stop-Button → läuft gerade? stoppen. Sonst Bühne schließen.
+  $('#as-stop').addEventListener('click', () => {
+    if (opRunning) { stop(); stageRunningUI(false); setStageState('gestoppt'); setStageStep('Vom Nutzer gestoppt'); log('Gestoppt'); }
+    else closeStage();
+  });
+
+  // Drag&Drop: Bühne am Kopf greifen → an linken/rechten Rand andocken (wie das Claude-Panel)
+  const snapHint = el('div', 'as-snap hidden'); document.body.appendChild(snapHint);
+  function showSnap(side) {
+    const va = $('#view-area'); const r = va.getBoundingClientRect();
+    const w = Math.min(stage.offsetWidth, r.width - 20);
+    snapHint.style.top = r.top + 'px'; snapHint.style.height = (r.height - 10) + 'px'; snapHint.style.width = w + 'px';
+    snapHint.style.left = (side === 'left' ? r.left : r.right - w) + 'px';
+    snapHint.classList.remove('hidden');
+  }
+  const stageHead = stage.querySelector('.as-head');
+  stageHead.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button') || e.button !== 0 || stageCollapsed) return;
+    e.preventDefault();
+    const shield = $('#drag-shield');
+    // WICHTIG: Webviews schlucken Maus-Events → Vollbild-Shield einblenden, sonst feuern mousemove/up nicht.
+    shield.classList.remove('hidden'); document.body.classList.add('as-dragging');
+    let moved = false; const startX = e.clientX;
+    const sideAt = (x) => (x < window.innerWidth / 2 ? 'left' : 'right');
+    const onMove = (ev) => {
+      if (!moved && Math.abs(ev.clientX - startX) < 6) return;
+      moved = true; stage.classList.add('as-grab');
+      showSnap(sideAt(ev.clientX));
+    };
+    const onUp = (ev) => {
+      document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+      shield.classList.add('hidden'); document.body.classList.remove('as-dragging'); stage.classList.remove('as-grab'); snapHint.classList.add('hidden');
+      if (moved) setStageSide(sideAt(ev.clientX));
+    };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  });
+
+  // Bühnenposition/-breite bei Fenstergröße nachführen
+  window.addEventListener('resize', () => { if (stageMode && !stage.classList.contains('hidden')) stageDock(); });
+  // Ergebnis-Karte
+  $('#ar-close').addEventListener('click', () => $('#agent-result').classList.add('hidden'));
+  $('#ar-copy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('#agent-result')._text || ''); const b = $('#ar-copy'); b.classList.add('ok'); setTimeout(() => b.classList.remove('ok'), 1100); } catch {}
+  });
+
+  return { toggle, analyze, run, isOpen: () => open, relayout: () => { if (stageMode && !stage.classList.contains('hidden')) stageDock(); }, relayoutAnimated };
 })();
 
 /* ============================================================ topbar popovers */
@@ -4161,7 +5380,7 @@ const teEdit = (() => {
   const TOOLS = [
     ['claude', 'i-claude', 'Claude (NOVA AI)'], ['music', 'i-music', 'Musik'], ['downloads', 'i-download', 'Downloads'],
     ['netmon', 'i-activity', 'Netzwerk-Monitor'], ['screenshot', 'i-camera', 'Screenshot'], ['split', 'i-split', 'Split View'],
-    ['shield', 'i-shield', 'NOVA Shield'], ['plugins', 'i-plugin', 'Plugin-Store'], ['palette', 'i-bolt', 'Befehlspalette'],
+    ['shield', 'i-shield', 'NOVA Shield'], ['operator', 'i-operator', 'NOVA Operator'], ['plugins', 'i-plugin', 'Plugin-Store'], ['palette', 'i-bolt', 'Befehlspalette'],
   ];
   let openFlag = false;
   let extList = [];   // aktuell geladene Erweiterungs-Actions (von extActions gesetzt)
@@ -4242,7 +5461,7 @@ const extActions = (() => {
   const wrap = $('#ext-actions');
   const pop = $('#ext-popup');
   const body = $('#ext-pop-body');
-  let current = null;
+  let current = null, currentUrl = null;
 
   async function refresh() {
     let acts = [];
@@ -4265,7 +5484,7 @@ const extActions = (() => {
     closePopup();
     if (wasOpen) return;
     if (!a.popup) { toast((a.name || 'Erweiterung') + ' hat kein Popup-Fenster', 'i-info'); return; }
-    current = a.id;
+    current = a.id; currentUrl = a.popup;
     $('#ext-pop-title').textContent = a.name;
     const wv = document.createElement('webview');
     wv.setAttribute('partition', PARTITION);
@@ -4280,9 +5499,29 @@ const extActions = (() => {
     body.innerHTML = ''; body.appendChild(wv);
     pop.classList.remove('hidden');
     positionPop(pop, btn);
+    // Lädt die Erweiterung wirklich GAR nicht (komplett leer)? → erst nach 16s eine ehrliche
+    // Meldung (gibt langsamen/login-pflichtigen Erweiterungen genug Zeit, sich aufzubauen).
+    const myId = a.id;
+    setTimeout(async () => {
+      if (current !== myId) return;
+      let info = null;
+      try { info = await wv.executeJavaScript('({t:(document.body?document.body.innerText.trim().length:0),n:document.querySelectorAll("div,button,input,form,main,section,a,canvas,img,iframe").length})', true); } catch {}
+      if (info && info.t < 2 && info.n < 3) showStuck(a);
+    }, 16000);
+  }
+  function showStuck(a) {
+    body.innerHTML = '';
+    const box = el('div', 'ext-stuck');
+    box.appendChild(icon('i-info'));
+    box.appendChild(el('p', null, `„${a.name}" lädt in NOVA nicht. Komplexe Erweiterungen (z. B. Passwort-Manager) brauchen Chrome-interne Funktionen, die NOVAs Erweiterungs-Engine (Electron) nicht voll bereitstellt.`));
+    const open = el('button', 'btn'); open.appendChild(icon('i-ext')); open.appendChild(el('span', null, 'Trotzdem im Tab öffnen'));
+    open.addEventListener('click', () => { if (currentUrl) { createTab(currentUrl); closePopup(); } });
+    box.appendChild(open);
+    body.appendChild(box);
   }
   function closePopup() { pop.classList.add('hidden'); body.innerHTML = ''; current = null; }
 
+  $('#ext-pop-open').addEventListener('click', () => { if (currentUrl) { createTab(currentUrl); closePopup(); } });
   $('#ext-pop-close').addEventListener('click', closePopup);
   window.nova.plugins.onActionsChanged(() => refresh());
   // Rückmeldung, wenn von einer Store-Seite aus installiert wurde

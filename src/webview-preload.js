@@ -10,6 +10,9 @@ if (location.protocol === 'nova:') {
     removeDial: (d) => ipcRenderer.invoke('newtab:removeDial', d),
     onDials: (cb) => ipcRenderer.on('newtab:dials', (_e, dials) => cb(dials)),
     onAccent: (cb) => ipcRenderer.on('newtab:accent', (_e, d) => cb(d)),
+    onPlugins: (cb) => ipcRenderer.on('newtab:plugins', (_e, d) => cb(d)),
+    // Agent-Modus: Suchbegriff als Ziel an den Browser (Host-Renderer) → NOVA Operator
+    agent: (goal) => ipcRenderer.sendToHost('nova-agent', goal),
   });
 } else {
   // Auf normalen Webseiten den Ghostery-Cosmetic-Filter aktivieren:
@@ -25,15 +28,54 @@ if (location.protocol === 'nova:') {
   // ------------------------------------------------------------------
   // Code in die MAIN WORLD der Seite einschleusen (der Preload läuft isoliert,
   // kann window.fetch der Seite also nicht direkt überschreiben).
+  // WICHTIG: Seiten wie YouTube/Spotify erzwingen Trusted Types — eine direkte
+  // String-Zuweisung an script.textContent wirft „requires 'TrustedScript'".
+  // Daher eine TrustedTypes-Policy nutzen (mit Fallbacks), sonst scheitert das
+  // Ad-Stripping → YouTube wartet auf geblockte Werbung → Video stockt.
   // ------------------------------------------------------------------
+  let __ttPolicy = null;
+  try {
+    if (window.trustedTypes && window.trustedTypes.createPolicy) {
+      __ttPolicy = window.trustedTypes.createPolicy('nova-inject', { createScript: (s) => s });
+    }
+  } catch (e) { __ttPolicy = null; }
   const injectMainWorld = (fn) => {
+    const code = '(' + fn.toString() + ')();';
+    const s = document.createElement('script');
     try {
-      const s = document.createElement('script');
-      s.textContent = '(' + fn.toString() + ')();';
-      (document.head || document.documentElement).appendChild(s);
-      s.remove();
-    } catch (e) { /* noop */ }
+      s.text = __ttPolicy ? __ttPolicy.createScript(code) : code;
+    } catch (e) {
+      try { s.text = code; } catch (e2) { try { s.textContent = code; } catch (e3) { return; } }
+    }
+    try { (document.head || document.documentElement).appendChild(s); s.remove(); } catch (e) { /* noop */ }
   };
+
+  // ------------------------------------------------------------------
+  // Google/YouTube-Consent-Seite automatisch wegklicken (sonst hängt YouTube Music
+  // im Musik-Player auf der Zustimmungsseite). Reject bevorzugt (Datenschutz),
+  // sonst Accept — beides leitet zur Seite weiter.
+  // ------------------------------------------------------------------
+  if (/(^|\.)consent\.(youtube|google)\.com$/.test(location.hostname)) {
+    const passConsent = () => {
+      try {
+        const rejectRx = /^(alle ablehnen|reject all|tout refuser|rechazar todo|alles afwijzen)$/i;
+        const acceptRx = /^(alle akzeptieren|accept all|ich stimme zu|i agree|zustimmen|tout accepter|aceptar todo)$/i;
+        const btns = document.querySelectorAll('button, [role="button"], input[type="submit"]');
+        let accept = null;
+        for (const b of btns) {
+          const t = (b.innerText || b.value || b.getAttribute('aria-label') || '').trim();
+          if (rejectRx.test(t)) { b.click(); return true; }
+          if (!accept && acceptRx.test(t)) accept = b;
+        }
+        if (accept) { accept.click(); return true; }
+      } catch (_) {}
+      return false;
+    };
+    let n = 0;
+    const iv = setInterval(() => { if (passConsent() || ++n > 25) clearInterval(iv); }, 350);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', passConsent, { once: true });
+    else passConsent();
+  }
 
   // ------------------------------------------------------------------
   // Chrome Web Store: „In NOVA installieren"-Button auf Erweiterungs-Seiten.
@@ -329,11 +371,14 @@ if (location.protocol === 'nova:') {
           );
           if (skip) skip.click();
         }
-        const enforce = document.querySelector('ytd-enforcement-message-view-model, tp-yt-paper-dialog');
+        // NUR die echte „Adblocker erkannt"-Sperre entfernen — NICHT generische
+        // tp-yt-paper-dialog (die nutzt YouTube auch für Menüs/Teilen → würde UI zerstören).
+        const enforce = document.querySelector('ytd-enforcement-message-view-model');
         if (enforce) {
           const v = document.querySelector('video.html5-main-video');
           if (v && v.paused) { try { v.play(); } catch {} }
-          enforce.remove();
+          const dlg = enforce.closest('tp-yt-paper-dialog') || enforce;
+          dlg.remove();
         }
       };
       setInterval(() => { try { skipAds(); } catch {} }, 600);
