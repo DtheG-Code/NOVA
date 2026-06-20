@@ -1920,6 +1920,8 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
     const stageNOVAExe = path.join(stageNOVA, exeName);
     const vbsPath = path.join(tmp, 'nova-upd-' + ts + '.vbs');
     const htaPath = path.join(tmp, 'nova-upd-' + ts + '.hta');
+    const icoPath = path.join(app.getPath('userData'), 'icon.ico');           // NOVA-Icon für Fenster + Taskleiste
+    const iconAttr = fs.existsSync(icoPath) ? ` ICON="${icoPath}"` : '';
 
     // Akzentfarbe für den Splash
     const ACC_HEX = { cyan: ['#00e5ff', '#7c4dff'], violet: ['#a78bfa', '#ec4899'], magenta: ['#f471b5', '#7c3aed'], lime: ['#a3e635', '#22d3ee'], amber: ['#fbbf24', '#fb7185'], ice: ['#7dd3fc', '#818cf8'] };
@@ -1929,9 +1931,11 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
     else if (ACC_HEX[accName]) { [A1, A2] = ACC_HEX[accName]; }
 
     // ---- Animierter Nebula-Splash (HTA / mshta, IE-Engine → CSS-Animationen, kein WebGL) ----
-    // KEIN <!doctype> — sonst ignoriert mshta das HTA:APPLICATION-Tag und zeigt die Standard-Titelleiste (Dateipfad).
-    const hta = `<html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html;charset=utf-8"><title>NOVA</title>
-<HTA:APPLICATION ID="nova" APPLICATIONNAME="NOVA" BORDER="none" CAPTION="no" SHOWINTASKBAR="no" SINGLEINSTANCE="yes" SCROLL="no" SYSMENU="no" CONTEXTMENU="no" SELECTION="no" INNERBORDER="no" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="no" />
+    // KEIN <!doctype>, und HTA:APPLICATION als ERSTES Element im <head> (vor den Metas) — sonst ignoriert
+    // mshta das Tag und zeigt die Windows-Titelleiste. ICON setzt das NOVA-Icon für Fenster + Taskleiste.
+    const hta = `<html><head>
+<HTA:APPLICATION ID="nova" APPLICATIONNAME="NOVA"${iconAttr} BORDER="none" CAPTION="no" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SCROLL="no" SYSMENU="no" CONTEXTMENU="no" SELECTION="no" INNERBORDER="no" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="no" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html;charset=utf-8"><title>NOVA</title>
 <style>
  html,body{margin:0;height:100%;background:#06060e;overflow:hidden;font-family:'Segoe UI',sans-serif;color:#eef0fa;}
  .neb{position:absolute;border-radius:50%;}

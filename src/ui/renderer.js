@@ -4371,7 +4371,7 @@ const claude = (() => {
 // bei jeder Änderung (öffnen/schließen/Seite/einklappen/Resize) alle Panels neu. So gibt es nie eine
 // Überlappung — egal ob 1 oder mehrere Panels links/rechts/eingeklappt sind.
 const dockManager = (() => {
-  const GAP = 3, COLLAPSED_GAP = 6, COLLAPSED_W = 66;
+  const GAP = 3, COLLAPSED_GAP = 6, COLLAPSED_W = 66, EDGE = 8;   // EDGE = Rand zwischen Fensterkante und äußerstem Panel (nichts abgeschnitten)
   const panels = new Map();   // id → { el, side, collapsed, full, open, width:()=>number }
   let roAttached = false;
   function ensureRO() {
@@ -4383,7 +4383,8 @@ const dockManager = (() => {
   function layout() {
     const va = $('#view-area'); if (!va) return;
     const r = va.getBoundingClientRect();
-    let lx = r.left, rx = window.innerWidth - r.right, leftPad = 0, rightPad = 0;
+    const baseL = r.left, baseR = window.innerWidth - r.right;
+    let lx = baseL + EDGE, rx = baseR + EDGE, hasL = false, hasR = false;   // EDGE-Rand vor dem äußersten Panel
     for (const p of panels.values()) {
       if (!p.open || !p.el) continue;
       p.el.style.top = Math.round(r.top) + 'px';
@@ -4391,14 +4392,15 @@ const dockManager = (() => {
         p.el.style.left = Math.round(r.left) + 'px'; p.el.style.right = 'auto'; p.el.style.width = Math.round(r.width) + 'px';
         continue;
       }
-      const w = p.collapsed ? COLLAPSED_W : Math.round((p.width && p.width()) || 460);
+      let w = p.collapsed ? COLLAPSED_W : Math.round((p.width && p.width()) || 460);
+      if (!p.collapsed) w = Math.min(w, Math.max(300, r.width - 110));   // kleine Bildschirme: nie über den Inhalt hinaus
       const g = p.collapsed ? COLLAPSED_GAP : GAP;   // eingeklappte Rails: einheitlicher Abstand (= Inhalt↔Rail = Rail↔Rail)
       p.el.style.width = w + 'px';
-      if (p.side === 'left') { p.el.style.left = Math.round(lx) + 'px'; p.el.style.right = 'auto'; lx += w + g; leftPad += w + g; }
-      else { p.el.style.right = Math.round(rx) + 'px'; p.el.style.left = 'auto'; rx += w + g; rightPad += w + g; }
+      if (p.side === 'left') { p.el.style.left = Math.round(lx) + 'px'; p.el.style.right = 'auto'; lx += w + g; hasL = true; }
+      else { p.el.style.right = Math.round(rx) + 'px'; p.el.style.left = 'auto'; rx += w + g; hasR = true; }
     }
-    va.style.paddingLeft = leftPad ? leftPad + 'px' : '';
-    va.style.paddingRight = rightPad ? rightPad + 'px' : '';
+    va.style.paddingLeft = hasL ? Math.round(lx - baseL) + 'px' : '';
+    va.style.paddingRight = hasR ? Math.round(rx - baseR) + 'px' : '';
   }
   let raf = 0;
   function layoutAnimated() { try { cancelAnimationFrame(raf); } catch {} const t0 = performance.now(); const tick = (t) => { layout(); if (t - t0 < 460) raf = requestAnimationFrame(tick); }; raf = requestAnimationFrame(tick); }
