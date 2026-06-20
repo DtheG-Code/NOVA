@@ -877,12 +877,9 @@ app.on('web-contents-created', (_e, contents) => {
   if (netMonOn) contents.once('dom-ready', () => netAttach(contents));
 
   contents.setWindowOpenHandler(({ url, disposition }) => {
-    if (isGoogleAuth(url)) {
-      // „Mit Google anmelden" (OAuth-Popup von Drittseiten wie Spotify): als ECHTES Top-Level-Fenster
-      // öffnen, das die SELBE Session wie der Öffner teilt → Google erlaubt OAuth in einem echten Fenster
-      // (blockt nur eingebettete Webviews), und die fertige Anmeldung landet in derselben Session = im Webview.
-      return { action: 'allow', overrideBrowserWindowOptions: { width: 480, height: 680, autoHideMenuBar: true, minimizable: false, maximizable: false, fullscreenable: false, title: 'Anmelden …' } };
-    }
+    // Google-Anmelde-Popup → NICHT als natives Fenster aus dem <webview> öffnen (das crasht NOVA),
+    // sondern ablehnen und über den Echtbrowser anmelden + Cookies importieren (funktioniert für YT Music & Co).
+    if (isGoogleAuth(url)) { googleLoginViaBrowser(); return { action: 'deny' }; }
     if (/^https?:|^about:blank/i.test(url)) {
       broadcast('tabs:open', { url, background: disposition === 'background-tab', openerId: contents.id });
     }
