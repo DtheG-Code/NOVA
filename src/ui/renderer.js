@@ -5740,8 +5740,14 @@ const updater = (() => {
     busy = false;
     if (res && res.ok && res.path) {
       $('#up-now').querySelector('span').textContent = 'Wird installiert …';
-      toast('Update wird installiert — ggf. Adminrechte bestätigen, NOVA startet automatisch neu', 'i-download');
-      window.nova.update.install(res.path);
+      const ir = await window.nova.update.install(res.path);
+      if (ir && ir.dev) {
+        // Entwicklungsmodus (npm start) → kein Selbst-Update; nur die gepackte NOVA.exe kann das.
+        $('#up-now').disabled = false; $('#up-now').querySelector('span').textContent = 'Schließen';
+        toast('Entwicklungsmodus erkannt — Auto-Update läuft nur in der installierten NOVA.exe', 'i-warn');
+      } else {
+        toast('Update wird installiert — ggf. Adminrechte bestätigen, NOVA startet automatisch neu', 'i-download');
+      }
     } else if (res && res.noAsset) {
       $('#up-now').disabled = false;
       $('#up-now').querySelector('span').textContent = 'Jetzt aktualisieren';

@@ -1678,8 +1678,14 @@ ipcMain.handle('update:download', async () => {
 // NovaData bleibt) und STARTET NOVA NEU. Sichtbares „wird aktualisiert"-Fenster + Log. UAC nur falls nötig.
 ipcMain.handle('update:install', async (_e, zipPath) => {
   try {
-    if (!zipPath || !fs.existsSync(zipPath)) return false;
-    if (process.platform !== 'win32') { shell.openPath(zipPath); setTimeout(() => app.quit(), 800); return true; }
+    if (!zipPath || !fs.existsSync(zipPath)) return { ok: false };
+    // KEIN Auto-Update im Entwicklungsmodus (npm start / electron .): process.execPath ist dann das
+    // Dev-Electron (node_modules\electron\dist\electron.exe) — ein In-Place-Update wuerde das Dev-Setup
+    // treffen und kann nicht korrekt neu starten. Nur die gepackte NOVA.exe darf sich selbst updaten.
+    if (process.defaultApp || /(^|[\\/])electron\.exe$/i.test(process.execPath)) {
+      return { ok: false, dev: true };
+    }
+    if (process.platform !== 'win32') { shell.openPath(zipPath); setTimeout(() => app.quit(), 800); return { ok: true }; }
     const exePath = process.execPath;
     const installDir = path.dirname(exePath);
     const exeName = path.basename(exePath);
@@ -1727,8 +1733,8 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
       // UAC: bat elevated starten; das bat taskkillt NOVA selbst (kein app.quit nötig → bei Abbruch bleibt NOVA offen)
       spawn('powershell.exe', ['-NoProfile', '-Command', "Start-Process -FilePath '" + batPath.replace(/'/g, "''") + "' -Verb RunAs"], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     }
-    return true;
-  } catch { return false; }
+    return { ok: true, elevated: !writable };
+  } catch { return { ok: false }; }
 });
 
 // ---- Website-Security-Datenbank (lokal + Lese-Sync vom öffentlichen GitHub-Repo) ----
