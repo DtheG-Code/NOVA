@@ -842,6 +842,8 @@ async function googleLoginViaBrowser() {
   }
 }
 ipcMain.handle('google:login', () => { googleLoginViaBrowser(); return { ok: true }; });
+// Google-Anmeldeseiten (auch über youtube-Accounts / OAuth) erkennen → in ALLEN Webviews umleiten
+const isGoogleAuth = (url) => /^https:\/\/accounts\.(google|youtube)\.com(\/|$|\?)/i.test(String(url || ''));
 
 // ---- Gemeinsame Bildschirmfreigabe (Discord + WhatsApp): Quellen sammeln → Auswahl im Renderer → zurück an die Seite ----
 let screenPickCb = null;
@@ -875,7 +877,7 @@ app.on('web-contents-created', (_e, contents) => {
   if (netMonOn) contents.once('dom-ready', () => netAttach(contents));
 
   contents.setWindowOpenHandler(({ url, disposition }) => {
-    if (/^https:\/\/accounts\.google\.com\//i.test(url)) { googleLoginViaBrowser(); return { action: 'deny' }; }
+    if (isGoogleAuth(url)) { googleLoginViaBrowser(); return { action: 'deny' }; }
     if (/^https?:|^about:blank/i.test(url)) {
       broadcast('tabs:open', { url, background: disposition === 'background-tab', openerId: contents.id });
     }
@@ -886,10 +888,18 @@ app.on('web-contents-created', (_e, contents) => {
   // will-navigate fängt direkte Navigationen, will-redirect die OAuth-302-Weiterleitungen
   // (z. B. „Mit Google anmelden" auf Spotify/Discord/Drittseiten) — sonst landet das Webview auf der geblockten Seite.
   const googleGuard = (e, url) => {
-    if (/^https:\/\/accounts\.google\.com\//i.test(url)) { e.preventDefault(); googleLoginViaBrowser(); }
+    if (isGoogleAuth(url)) { e.preventDefault(); googleLoginViaBrowser(); }
   };
   contents.on('will-navigate', googleGuard);
   contents.on('will-redirect', googleGuard);
+  // Sicherheitsnetz: rutscht eine Navigation zu Google doch durch (Popup-Tab, Client-Redirect, FedCM-Fallback),
+  // sofort stoppen + zur vorherigen Seite zurück → KEIN Schwarzbild; Reroute über den Echtbrowser.
+  contents.on('did-start-navigation', (_e, url, inPlace, isMain) => {
+    if (!isMain || inPlace || !isGoogleAuth(url)) return;
+    try { contents.stop(); } catch {}
+    googleLoginViaBrowser();
+    setTimeout(() => { try { if (contents.canGoBack()) contents.goBack(); } catch {} }, 60);
+  });
 
   // UA-Metadaten via CDP setzen (echtes Chrome, vor jedem Script). Weicht DevTools/Netzwerk-Monitor aus:
   // bei offenem DevTools geben wir den Debugger frei; nach Navigationen wird das Override neu gesetzt.
