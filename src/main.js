@@ -914,11 +914,23 @@ app.whenReady().then(async () => {
   }
 
   // nova:// Protokoll (liefert auch Assets wie Fonts aus)
+  const studioDataDir = path.join(app.getPath('userData'), 'studio');
   const novaFallback = () => net.fetch(pathToFileURL(path.join(UI_DIR, 'newtab.html')).toString());
   const novaHandler = (req) => {
     try {
       const u = new URL(req.url);
       let p = decodeURIComponent(u.pathname || '/');
+      // NOVA Studio (contained Windows-VM) als eigene Seite
+      if (u.hostname === 'studio' && (p === '/' || p === '')) {
+        return net.fetch(pathToFileURL(path.join(UI_DIR, 'studio.html')).toString());
+      }
+      // Heruntergeladene VM-Images aus dem Container-Verzeichnis (außerhalb von UI_DIR) ausliefern
+      if (u.hostname === 'studio-data') {
+        const f = path.normalize(path.join(studioDataDir, p));
+        if (!f.startsWith(studioDataDir)) return new Response('forbidden', { status: 403 });
+        if (fs.existsSync(f) && fs.statSync(f).isFile()) return net.fetch(pathToFileURL(f).toString());
+        return new Response('not found', { status: 404 });
+      }
       if (p === '/' || p === '') return novaFallback();
       const file = path.normalize(path.join(UI_DIR, p));
       if (!file.startsWith(UI_DIR)) return new Response('forbidden', { status: 403 });
@@ -962,6 +974,29 @@ app.whenReady().then(async () => {
     const allowed = ['fullscreen', 'clipboard-sanitized-write', 'clipboard-read', 'media', 'notifications', 'pointerLock'];
     cb(allowed.includes(permission));
   });
+
+  // ---- Google/YouTube-Login: User-Agent Client Hints säubern ----
+  // Google blockt Sign-in ("Browser nicht unterstützt/sicher"), wenn es im UA ODER in den
+  // Sec-CH-UA-Client-Hints die Marke "Electron"/Headless erkennt. Wir erzwingen den sauberen
+  // Chrome-UA und schreiben die Brand-Hints auf echtes Google Chrome um.
+  const chMajor = String(process.versions.chrome || '138').split('.')[0];
+  const chFull = process.versions.chrome || (chMajor + '.0.0.0');
+  const chBrand = `"Chromium";v="${chMajor}", "Google Chrome";v="${chMajor}", "Not.A/Brand";v="24"`;
+  const chBrandFull = `"Chromium";v="${chFull}", "Google Chrome";v="${chFull}", "Not.A/Brand";v="24.0.0.0"`;
+  function cleanClientHints(s) {
+    s.webRequest.onBeforeSendHeaders((details, cb) => {
+      const h = details.requestHeaders;
+      for (const k of Object.keys(h)) {
+        const lk = k.toLowerCase();
+        if (lk === 'user-agent') h[k] = chromeUA;
+        else if (lk === 'sec-ch-ua') h[k] = chBrand;
+        else if (lk === 'sec-ch-ua-full-version-list') h[k] = chBrandFull;
+      }
+      cb({ requestHeaders: h });
+    });
+  }
+  cleanClientHints(ses);
+  cleanClientHints(musicSes);
 
   setupDownloads();
   createWindow();
@@ -1692,46 +1727,83 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
     const ts = Date.now();
     const tmp = app.getPath('temp');
     const stage = path.join(tmp, 'nova-upd-' + ts);
-    const batPath = path.join(tmp, 'nova-upd-' + ts + '.bat');
-    const log = path.join(tmp, 'nova-upd-' + ts + '.log');
-    const bat = [
-      '@echo off',
-      'title NOVA Update',
-      'echo.',
-      'echo    NOVA wird aktualisiert - bitte einen Moment warten...',
-      'echo    (Dieses Fenster schliesst sich automatisch.)',
-      'echo.',
-      `> "${log}" echo NOVA-Update gestartet`,
-      'timeout /t 1 /nobreak >nul',
-      `taskkill /IM "${exeName}" /F >nul 2>&1`,
-      'timeout /t 2 /nobreak >nul',
-      `taskkill /IM "${exeName}" /F >nul 2>&1`,
-      `>> "${log}" echo entpacke...`,
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${stage}' -Force" >> "${log}" 2>&1`,
-      `set "SRC=${stage}\\NOVA"`,
-      `if not exist "%SRC%\\${exeName}" set "SRC=${stage}"`,
-      `>> "${log}" echo kopiere von "%SRC%" nach "${installDir}"`,
-      `robocopy "%SRC%" "${installDir}" /E /R:3 /W:2 /NFL /NDL /NJH /NJS >> "${log}" 2>&1`,
-      `>> "${log}" echo robocopy-Ergebnis %ERRORLEVEL%`,
-      `>> "${log}" echo starte NOVA neu`,
-      `start "" /D "${installDir}" "${exePath}"`,
-      'timeout /t 1 /nobreak >nul',
-      `rmdir /S /Q "${stage}" >nul 2>&1`,
-      `del /Q "${zipPath}" >nul 2>&1`,
-      'del /Q "%~f0" >nul 2>&1',
+    const stageNOVA = path.join(stage, 'NOVA');
+    const stageNOVAExe = path.join(stageNOVA, exeName);
+    const vbsPath = path.join(tmp, 'nova-upd-' + ts + '.vbs');
+    const htaPath = path.join(tmp, 'nova-upd-' + ts + '.hta');
+
+    // Akzentfarbe für den Splash
+    const ACC_HEX = { cyan: ['#00e5ff', '#7c4dff'], violet: ['#a78bfa', '#ec4899'], magenta: ['#f471b5', '#7c3aed'], lime: ['#a3e635', '#22d3ee'], amber: ['#fbbf24', '#fb7185'], ice: ['#7dd3fc', '#818cf8'] };
+    const accName = settings.get('accent', 'cyan');
+    let A1 = '#00e5ff', A2 = '#7c4dff';
+    if (accName === 'custom') { const c = settings.get('customAccent', null); if (c && c.a) { A1 = c.a; A2 = c.b || c.a; } }
+    else if (ACC_HEX[accName]) { [A1, A2] = ACC_HEX[accName]; }
+
+    // ---- Animierter Nebula-Splash (HTA / mshta, IE-Engine → CSS-Animationen, kein WebGL) ----
+    const hta = `<!doctype html><html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html;charset=utf-8">
+<HTA:APPLICATION ID="nova" BORDER="none" CAPTION="no" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SCROLL="no" SYSMENU="no" CONTEXTMENU="no" SELECTION="no" INNERBORDER="no" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="no" />
+<style>
+ html,body{margin:0;height:100%;background:#06060e;overflow:hidden;font-family:'Segoe UI',sans-serif;color:#eef0fa;}
+ .neb{position:absolute;border-radius:50%;}
+ .n1{width:560px;height:560px;left:-160px;top:-200px;background:radial-gradient(circle,${A1},rgba(0,0,0,0) 60%);opacity:.55;animation:d1 9s ease-in-out infinite alternate;}
+ .n2{width:600px;height:600px;right:-200px;bottom:-220px;background:radial-gradient(circle,${A2},rgba(0,0,0,0) 60%);opacity:.55;animation:d2 11s ease-in-out infinite alternate;}
+ .n3{width:320px;height:320px;left:38%;top:26%;background:radial-gradient(circle,${A1},rgba(0,0,0,0) 60%);opacity:.3;animation:d3 15s linear infinite;}
+ @keyframes d1{to{transform:translate(64px,52px) scale(1.22);}}
+ @keyframes d2{to{transform:translate(-64px,-44px) scale(1.26);}}
+ @keyframes d3{50%{transform:translate(-42px,32px);}}
+ .vig{position:absolute;left:0;top:0;right:0;bottom:0;box-shadow:inset 0 0 150px rgba(0,0,6,.72);}
+ .wrap{position:relative;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;}
+ .ring{width:76px;height:76px;border-radius:50%;border:3px solid rgba(255,255,255,.12);border-top-color:${A1};box-shadow:0 0 34px ${A1};animation:spin 1.05s linear infinite;margin-bottom:22px;}
+ @keyframes spin{to{transform:rotate(360deg);}}
+ .t{font-size:22px;font-weight:700;letter-spacing:.4px;}
+ .t b{color:${A1};}
+ .s{font-size:13px;color:#9aa0bb;margin-top:8px;}
+ .bar{margin-top:24px;width:300px;height:5px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;position:relative;}
+ .bar i{position:absolute;left:-42%;top:0;height:100%;width:42%;border-radius:99px;background:${A1};box-shadow:0 0 16px ${A1};animation:slide 1.3s ease-in-out infinite;}
+ @keyframes slide{to{left:100%;}}
+</style></head>
+<body><div class="neb n1"></div><div class="neb n2"></div><div class="neb n3"></div><div class="vig"></div>
+<div class="wrap"><div class="ring"></div><div class="t">NOVA <b>wird aktualisiert</b></div><div class="s">Neue Version wird installiert &mdash; NOVA startet gleich automatisch neu.</div><div class="bar"><i></i></div></div>
+<script>window.resizeTo(600,380);window.moveTo((screen.availWidth-600)/2,(screen.availHeight-380)/2);</script>
+</body></html>`;
+    fs.writeFileSync(htaPath, hta, 'utf8');
+
+    // ---- VBS-Updater (komplett OHNE sichtbare Konsole; Q=Chr(34) für saubere Quotes) ----
+    const vbs = [
+      'Set sh = CreateObject("WScript.Shell")',
+      'Set fso = CreateObject("Scripting.FileSystemObject")',
+      'Dim Q : Q = Chr(34)',
+      'On Error Resume Next',
+      `Set splash = sh.Exec("mshta.exe " & Q & "${htaPath}" & Q)`,
+      'On Error GoTo 0',
+      'WScript.Sleep 1500',
+      `sh.Run "taskkill /IM " & Q & "${exeName}" & Q & " /F", 0, True`,
+      'WScript.Sleep 1800',
+      `sh.Run "taskkill /IM " & Q & "${exeName}" & Q & " /F", 0, True`,
+      `sh.Run "powershell -NoProfile -ExecutionPolicy Bypass -Command " & Q & "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${stage}' -Force" & Q, 0, True`,
+      `Dim src : src = "${stageNOVA}"`,
+      `If Not fso.FileExists("${stageNOVAExe}") Then src = "${stage}"`,
+      `sh.Run "robocopy " & Q & src & Q & " " & Q & "${installDir}" & Q & " /E /R:3 /W:2 /NFL /NDL /NJH /NJS", 0, True`,
+      'On Error Resume Next',
+      'splash.Terminate()',
+      'On Error GoTo 0',
+      `sh.Run Q & "${exePath}" & Q, 1, False`,
+      'WScript.Sleep 1200',
+      `sh.Run "cmd /c rmdir /S /Q " & Q & "${stage}" & Q & " & del /Q " & Q & "${zipPath}" & Q & " & del /Q " & Q & "${htaPath}" & Q, 0, False`,
+      'fso.DeleteFile WScript.ScriptFullName',
     ].join('\r\n');
-    fs.writeFileSync(batPath, bat, 'ascii');   // .bat: KEIN BOM (sonst bricht @echo off)
+    fs.writeFileSync(vbsPath, '﻿' + vbs, 'utf16le');   // BOM + UTF-16 → wscript liest Umlaut-Pfade korrekt
 
     // Schreibrecht am Installationsort prüfen → sonst per UAC elevated ausführen
     let writable = true;
     try { const t = path.join(installDir, '.nova-wtest-' + ts); fs.writeFileSync(t, 'x'); fs.unlinkSync(t); } catch { writable = false; }
     if (writable) {
-      // cmd /c start → echte Loslösung (überlebt app.quit); sichtbares Update-Fenster
-      spawn('cmd.exe', ['/c', 'start "" "' + batPath + '"'], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }).unref();
+      // cmd /c start /b wscript → losgelöst (überlebt app.quit) UND ohne Konsolenfenster
+      spawn('cmd.exe', ['/c', 'start "" /b wscript.exe "' + vbsPath + '"'], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }).unref();
       setTimeout(() => app.quit(), 500);
     } else {
-      // UAC: bat elevated starten; das bat taskkillt NOVA selbst (kein app.quit nötig → bei Abbruch bleibt NOVA offen)
-      spawn('powershell.exe', ['-NoProfile', '-Command', "Start-Process -FilePath '" + batPath.replace(/'/g, "''") + "' -Verb RunAs"], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+      // UAC: wscript elevated; das VBS beendet NOVA selbst (bei UAC-Abbruch bleibt NOVA offen)
+      spawn('powershell.exe', ['-NoProfile', '-Command', "Start-Process -FilePath 'wscript.exe' -ArgumentList '\"" + vbsPath + "\"' -Verb RunAs"], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
     }
     return { ok: true, elevated: !writable };
   } catch { return { ok: false }; }
@@ -1802,6 +1874,107 @@ ipcMain.on('session:save', (_e, tabs) => settings.set('lastSession', tabs));
 
 // Neuer-Tab-Seite
 const fromNova = (e) => !!e.senderFrame?.url?.startsWith('nova:');
+
+// ---- NOVA Studio: contained-VM Speicher (Snapshots als Container) + Image-Download ----
+const STUDIO_DIR = path.join(app.getPath('userData'), 'studio');
+const STUDIO_IMG_DIR = path.join(STUDIO_DIR, 'images');
+const studioMkdir = (d) => { try { fs.mkdirSync(d, { recursive: true }); } catch {} };
+const studioSafeId = (id) => String(id || '').replace(/[^a-z0-9\-]/gi, '');
+
+ipcMain.handle('studio:list', (e) => {
+  if (!fromNova(e)) return [];
+  try {
+    studioMkdir(STUDIO_DIR);
+    const out = [];
+    for (const name of fs.readdirSync(STUDIO_DIR)) {
+      const metaF = path.join(STUDIO_DIR, name, 'meta.json');
+      if (!fs.existsSync(metaF)) continue;
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaF, 'utf8'));
+        let size = 0; try { size = fs.statSync(path.join(STUDIO_DIR, name, 'state.bin')).size; } catch {}
+        out.push({ id: meta.id || name, name: meta.name || name, os: meta.os || 'linux', created: meta.created || 0, size });
+      } catch {}
+    }
+    out.sort((a, b) => (b.created || 0) - (a.created || 0));
+    return out;
+  } catch { return []; }
+});
+
+ipcMain.handle('studio:save', (e, meta, state) => {
+  if (!fromNova(e)) return { ok: false };
+  try {
+    const id = studioSafeId(meta && meta.id);
+    if (!id || !state) return { ok: false };
+    const dir = path.join(STUDIO_DIR, id);
+    studioMkdir(dir);
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ id, name: (meta.name || 'VM'), os: (meta.os || 'linux'), created: Date.now() }));
+    fs.writeFileSync(path.join(dir, 'state.bin'), Buffer.from(state));
+    return { ok: true };
+  } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+});
+
+ipcMain.handle('studio:load', (e, id) => {
+  if (!fromNova(e)) return null;
+  try {
+    const f = path.join(STUDIO_DIR, studioSafeId(id), 'state.bin');
+    if (!fs.existsSync(f)) return null;
+    const buf = fs.readFileSync(f);
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);   // ArrayBuffer für v86.restore_state
+  } catch { return null; }
+});
+
+ipcMain.handle('studio:delete', (e, id) => {
+  if (!fromNova(e)) return { ok: false };
+  try {
+    const sid = studioSafeId(id);
+    if (!sid) return { ok: false };
+    fs.rmSync(path.join(STUDIO_DIR, sid), { recursive: true, force: true });   // restlos löschen
+    return { ok: true };
+  } catch { return { ok: false }; }
+});
+
+ipcMain.handle('studio:image', (e, os) => {
+  if (!fromNova(e)) return { ready: false };
+  try {
+    if (os === 'reactos') {
+      const f = path.join(STUDIO_IMG_DIR, 'reactos.img');
+      if (fs.existsSync(f)) return { ready: true, url: 'nova://studio-data/images/reactos.img', size: fs.statSync(f).size };
+      return { ready: false };
+    }
+    return { ready: true };   // Linux ist gebündelt
+  } catch { return { ready: false }; }
+});
+
+ipcMain.handle('studio:download', async (e, os) => {
+  if (!fromNova(e)) return { ok: false };
+  if (os !== 'reactos') return { ok: true };
+  const url = settings.get('studioReactosUrl', '');
+  if (!url) return { ok: false, error: 'Kein ReactOS-Image hinterlegt. In den NOVA-Einstellungen eine Image-URL setzen (studioReactosUrl).' };
+  try {
+    studioMkdir(STUDIO_IMG_DIR);
+    const dest = path.join(STUDIO_IMG_DIR, 'reactos.img');
+    const tmp = dest + '.part';
+    await new Promise((resolve, reject) => {
+      const req = net.request(url);
+      req.on('response', (res) => {
+        if (res.statusCode >= 400) { reject(new Error('HTTP ' + res.statusCode)); return; }
+        const total = parseInt(res.headers['content-length'] || '0', 10);
+        let got = 0;
+        const out = fs.createWriteStream(tmp);
+        res.on('data', (chunk) => {
+          got += chunk.length; out.write(chunk);
+          if (total && !e.sender.isDestroyed()) e.sender.send('studio:progress', { pct: Math.round((got / total) * 100), status: 'Lade ReactOS … ' + (got / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MB' });
+        });
+        res.on('end', () => out.end(() => { try { fs.renameSync(tmp, dest); resolve(); } catch (err) { reject(err); } }));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    return { ok: true, url: 'nova://studio-data/images/reactos.img', size: fs.statSync(dest).size };
+  } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+});
+
 ipcMain.handle('newtab:data', async (e) => {
   if (!fromNova(e)) return null;
   return {

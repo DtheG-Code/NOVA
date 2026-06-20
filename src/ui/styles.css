@@ -87,6 +87,21 @@ kbd {
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* ============================== atmosphere */
+/* GPU-Nebula GEZIELT in der Top-Tableiste und der Sidebar (je eigener kleiner WebGL-Canvas, dunkel & bewegt) */
+/* WICHTIG: <canvas> ist ein replaced element → width/height EXPLIZIT auf 100%, sonst nimmt es die
+   Buffer-Eigengröße (0.55×) und sitzt verschoben in der Ecke statt die Fläche bis zum Rahmen zu füllen. */
+#tabstrip-neb {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; display: none;
+}
+body.neb-gpu.tabs-top #tabstrip-neb { display: block; }
+body.neb-gpu.tabs-top #tabstrip { background: rgba(5, 5, 11, 0.72); }   /* Canvas liefert den Nebel → Basis dunkel halten */
+body.neb-gpu.tabs-top #tabstrip .nebula { display: none; }              /* CSS-Dots aus, der Canvas übernimmt */
+
+#sidebar-neb {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; display: none;   /* z:-1 → hinter dem Inhalt, über dem BG */
+}
+body.neb-gpu #sidebar-neb { display: block; }
+body.neb-gpu #sidebar { background: rgba(5, 5, 11, 0.55); }            /* Sidebar-Glas dunkel, Canvas scheint durch */
 .aurora { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
 .aurora i {
   position: absolute;
@@ -123,6 +138,7 @@ kbd {
 
 /* ============================== sidebar */
 #sidebar {
+  position: relative;            /* Verankerung für den Nebula-Canvas (#sidebar-neb, z-index:-1) */
   display: flex; flex-direction: column;
   min-width: 0; overflow: hidden;
   padding: 0 10px 10px;
@@ -841,6 +857,34 @@ body.tabs-top #tabstrip-tabs .tab.pinned-mini .tab-close { display: none; }
 /* ============================== view area */
 #view-area { flex: 1; min-height: 0; position: relative; padding: 0 10px 10px; }
 #app.content-fs #view-area { padding: 0; }
+
+/* ===== NOVA Studio — contained VM Panel ===== */
+#studio-panel {
+  position: absolute; inset: 0; z-index: 30;
+  display: flex; flex-direction: column;
+  border-radius: var(--radius); overflow: hidden;
+  background: #05050c; border: 1px solid var(--border);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+  opacity: 0; transform: scale(0.985); transform-origin: 100% 50%;
+  transition: opacity 0.3s var(--ease), transform 0.3s var(--ease), left 0.3s var(--ease);
+  pointer-events: none;
+}
+#studio-panel.hidden { display: none; }
+#studio-panel.show { opacity: 1; transform: none; pointer-events: auto; }
+#studio-panel.split { left: calc(50% + 5px); }                 /* rechte Hälfte */
+#webviews.studio-split > .wv-wrap { right: calc(50% + 5px); }  /* Web-Ansicht in die linke Hälfte */
+.studio-bar {
+  height: 38px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 13px;
+  background: rgba(8, 8, 16, 0.6); backdrop-filter: blur(18px); border-bottom: 1px solid var(--border);
+}
+.studio-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 12.5px; }
+.studio-brand b { background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.studio-brand .sb-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--grad); box-shadow: 0 0 10px var(--acc-glow); }
+.studio-brand .sb-tag { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: rgba(52, 211, 153, 0.12); color: #6ee7b7; }
+.studio-bar-btns { margin-left: auto; display: flex; gap: 4px; }
+.studio-body { flex: 1; min-height: 0; position: relative; background: #000; }
+.studio-body webview { width: 100%; height: 100%; display: flex; }
+#btn-studio.active { color: var(--acc-text); background: var(--acc-soft); }
 
 #webviews {
   position: relative; width: 100%; height: 100%;
@@ -1822,17 +1866,28 @@ body.cl-float #claude-panel { animation: musicIn 0.3s var(--spring) both; }
 .topbar-pop > *, .palette-box > *, .hub-box > *, .cheats-box > * { position: relative; z-index: 1; }
 #shield-pop::before, #space-edit::before, #bm-save::before, #omni-drop::before, #ctx-menu::before,
 .topbar-pop::before, .palette-box::before, .hub-box::before, .cheats-box::before {
-  content: ''; position: absolute; inset: -45%; z-index: 0; pointer-events: none;
+  content: ''; position: absolute; inset: -55%; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(circle at 26% 24%, color-mix(in srgb, var(--acc) 34%, transparent), transparent 46%),
-    radial-gradient(circle at 76% 60%, color-mix(in srgb, var(--acc2) 32%, transparent), transparent 48%),
-    radial-gradient(circle at 52% 90%, color-mix(in srgb, var(--acc) 22%, transparent), transparent 52%);
-  filter: blur(24px);
-  opacity: 0.42;
-  animation: nebDrift 26s var(--ease) infinite alternate;
+    radial-gradient(38% 46% at 24% 22%, color-mix(in srgb, var(--acc) 42%, transparent), transparent 60%),
+    radial-gradient(42% 50% at 78% 64%, color-mix(in srgb, var(--acc2) 40%, transparent), transparent 62%),
+    radial-gradient(30% 36% at 54% 92%, color-mix(in srgb, var(--acc) 26%, transparent), transparent 60%),
+    conic-gradient(from 210deg at 60% 38%, color-mix(in srgb, var(--acc2) 24%, transparent), transparent 38%, color-mix(in srgb, var(--acc) 22%, transparent) 72%, transparent);
+  background-size: 180% 180%;
+  filter: blur(26px) saturate(1.3);
+  opacity: 0.5;
+  animation: nebSwirl 28s var(--ease) infinite alternate, nebPan 44s linear infinite;
+}
+@keyframes nebSwirl {
+  0%   { transform: translate(-4%, -3%) rotate(0deg) scale(1); }
+  50%  { transform: translate(3%, 2%) rotate(6deg) scale(1.12); }
+  100% { transform: translate(5%, 4%) rotate(11deg) scale(1.18); }
+}
+@keyframes nebPan {
+  0%   { background-position: 0% 0%, 100% 100%, 50% 100%, 0% 0%; }
+  100% { background-position: 60% 40%, 30% 60%, 80% 20%, 100% 100%; }
 }
 /* Im großen Einstellungs-/Verlaufs-Fenster dezenter halten (Lesbarkeit) */
-.hub-box::before { opacity: 0.26; }
+.hub-box::before { opacity: 0.3; }
 
 /* ---- Update-Hinweis (Nebula-Karte, dezent unten rechts) ---- */
 #update-pop {
@@ -1889,6 +1944,109 @@ body.cl-float #claude-panel { animation: musicIn 0.3s var(--spring) both; }
   from { transform: translate(-3%, -2%) rotate(0deg) scale(1); }
   to   { transform: translate(4%, 3%) rotate(10deg) scale(1.14); }
 }
+
+/* ============================================================
+   Update-Splash  ·  Vollbild-Nebula beim Beenden für das Update
+   ============================================================ */
+#upd-splash {
+  position: fixed; inset: 0; z-index: 9000;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(140% 120% at 50% 40%, #0a0a16 0%, #05050c 70%, #030308 100%);
+  opacity: 0; transition: opacity 0.36s var(--ease);
+  overflow: hidden; -webkit-app-region: no-drag;
+}
+#upd-splash.hidden { display: none; }
+#upd-splash.show { opacity: 1; }
+.upd-neb {
+  position: absolute; border-radius: 50%; pointer-events: none;
+  filter: blur(60px); will-change: transform;
+  mix-blend-mode: screen;
+}
+.upd-neb.n1 {
+  width: 60vw; height: 60vw; left: -14vw; top: -20vw;
+  background: radial-gradient(circle, color-mix(in srgb, var(--acc) 78%, transparent), transparent 62%);
+  opacity: 0.5; animation: updNeb1 13s var(--ease) infinite alternate;
+}
+.upd-neb.n2 {
+  width: 64vw; height: 64vw; right: -18vw; bottom: -22vw;
+  background: radial-gradient(circle, color-mix(in srgb, var(--acc2) 76%, transparent), transparent 62%);
+  opacity: 0.5; animation: updNeb2 17s var(--ease) infinite alternate;
+}
+.upd-neb.n3 {
+  width: 34vw; height: 34vw; left: 36%; top: 26%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--acc) 60%, transparent), transparent 60%);
+  opacity: 0.3; animation: updNeb3 21s linear infinite;
+}
+@keyframes updNeb1 { to { transform: translate(7vw, 6vw) scale(1.22); } }
+@keyframes updNeb2 { to { transform: translate(-7vw, -5vw) scale(1.26); } }
+@keyframes updNeb3 { 50% { transform: translate(-5vw, 4vw) scale(1.1); } }
+.upd-grain {
+  position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 240px 40px rgba(0, 0, 6, 0.8);
+  background-image: radial-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 3px 3px;
+}
+.upd-card {
+  position: relative; z-index: 2; text-align: center;
+  padding: 40px 52px; border-radius: 24px;
+  background: color-mix(in srgb, var(--surface, #0d0d18) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--acc) 26%, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), 0 0 60px color-mix(in srgb, var(--acc) 18%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  transform: translateY(18px) scale(0.96); opacity: 0;
+  transition: transform 0.5s var(--ease), opacity 0.5s var(--ease);
+}
+#upd-splash.show .upd-card { transform: none; opacity: 1; }
+/* Orbit: glühender Kern + kreisende Partikel */
+.upd-orbit { position: relative; width: 104px; height: 104px; margin: 0 auto 26px; }
+.upd-core {
+  position: absolute; left: 50%; top: 50%; width: 26px; height: 26px;
+  margin: -13px 0 0 -13px; border-radius: 50%;
+  background: var(--grad, linear-gradient(135deg, var(--acc), var(--acc2)));
+  box-shadow: 0 0 26px 6px color-mix(in srgb, var(--acc) 70%, transparent);
+  animation: updPulse 1.8s var(--ease) infinite;
+}
+.upd-orbit::before {
+  content: ''; position: absolute; inset: 14px; border-radius: 50%;
+  border: 1px dashed color-mix(in srgb, var(--acc) 30%, transparent);
+  animation: updSpin 9s linear infinite;
+}
+.upd-orbit i {
+  position: absolute; inset: 0; border-radius: 50%; animation: updSpin 2.6s linear infinite;
+}
+.upd-orbit i::before {
+  content: ''; position: absolute; top: -2px; left: 50%; margin-left: -4px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 12px 2px color-mix(in srgb, var(--acc) 90%, #fff);
+}
+.upd-orbit i:nth-child(3) { inset: 16px; animation-duration: 3.6s; animation-direction: reverse; }
+.upd-orbit i:nth-child(3)::before { background: var(--acc2); box-shadow: 0 0 12px 2px var(--acc2); }
+.upd-orbit i:nth-child(4) { inset: 30px; animation-duration: 1.9s; }
+.upd-orbit i:nth-child(4)::before { width: 6px; height: 6px; background: var(--acc); box-shadow: 0 0 10px 2px var(--acc); }
+@keyframes updSpin { to { transform: rotate(360deg); } }
+@keyframes updPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 26px 6px color-mix(in srgb, var(--acc) 70%, transparent); }
+  50% { transform: scale(1.14); box-shadow: 0 0 40px 12px color-mix(in srgb, var(--acc) 90%, transparent); }
+}
+.upd-title { font-size: 26px; font-weight: 700; letter-spacing: 0.3px; color: var(--text, #eef0fa); }
+.upd-title b {
+  background: var(--grad, linear-gradient(135deg, var(--acc), var(--acc2)));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent;
+}
+.upd-ver { font-size: 13.5px; color: var(--text-2, #9aa0bb); margin-top: 9px; }
+.upd-bar {
+  position: relative; width: 280px; height: 5px; margin: 24px auto 0;
+  border-radius: 99px; background: rgba(255, 255, 255, 0.08); overflow: hidden;
+}
+.upd-bar i {
+  position: absolute; top: 0; left: -42%; width: 42%; height: 100%; border-radius: 99px;
+  background: var(--grad, linear-gradient(90deg, var(--acc), var(--acc2)));
+  box-shadow: 0 0 16px color-mix(in srgb, var(--acc) 80%, transparent);
+  animation: updSlide 1.35s var(--ease) infinite;
+}
+@keyframes updSlide { to { left: 100%; } }
+.upd-hint { font-size: 11.5px; color: var(--text-3, #6b7090); margin-top: 16px; }
 
 /* ============================================================
    Micro-Interactions  ·  smooth Klick-/Hover-Animationen

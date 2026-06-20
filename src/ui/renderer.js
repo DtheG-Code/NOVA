@@ -2147,6 +2147,7 @@ function renderSettings() {
       state.settings.nebulaQuality = val;
       await window.nova.settings.set({ nebulaQuality: val });
       pushNebulaToNewtabs(val);
+      try { chromeNebula.apply(val); } catch {}
       renderSettings();
       toast('Nebula-Grafik: ' + label, 'i-bolt');
     });
@@ -5728,6 +5729,22 @@ const updater = (() => {
   }
   function close() { pop.classList.add('hidden'); }
 
+  // Vollbild-Nebula-Overlay während NOVA für das Update beendet wird
+  function showInstallSplash(version) {
+    const s = $('#upd-splash');
+    if (!s) return;
+    const v = $('#upd-splash-ver');
+    if (v) v.textContent = version ? ('Version ' + version + ' wird installiert') : 'Neue Version wird installiert';
+    s.classList.remove('hidden');
+    requestAnimationFrame(() => s.classList.add('show'));
+  }
+  function hideInstallSplash() {
+    const s = $('#upd-splash');
+    if (!s) return;
+    s.classList.remove('show');
+    setTimeout(() => s.classList.add('hidden'), 360);
+  }
+
   $('#up-close').addEventListener('click', close);
   $('#up-later').addEventListener('click', close);
   $('#up-page').addEventListener('click', () => window.nova.update.openPage());
@@ -5740,14 +5757,23 @@ const updater = (() => {
     busy = false;
     if (res && res.ok && res.path) {
       $('#up-now').querySelector('span').textContent = 'Wird installiert …';
+      showInstallSplash(info && info.version);   // animiertes Nebula-Overlay (NOVA schließt gleich)
       const ir = await window.nova.update.install(res.path);
       if (ir && ir.dev) {
         // Entwicklungsmodus (npm start) → kein Selbst-Update; nur die gepackte NOVA.exe kann das.
+        hideInstallSplash();
         $('#up-now').disabled = false; $('#up-now').querySelector('span').textContent = 'Schließen';
         toast('Entwicklungsmodus erkannt — Auto-Update läuft nur in der installierten NOVA.exe', 'i-warn');
-      } else {
-        toast('Update wird installiert — ggf. Adminrechte bestätigen, NOVA startet automatisch neu', 'i-download');
+      } else if (ir && ir.ok === false) {
+        hideInstallSplash();
+        $('#up-now').disabled = false; $('#up-now').querySelector('span').textContent = 'Erneut versuchen';
+        toast('Update konnte nicht gestartet werden', 'i-warn');
+      } else if (ir && ir.elevated) {
+        // UAC: NOVA bleibt offen bis bestätigt → Splash ausblenden, Hinweis zeigen
+        hideInstallSplash();
+        toast('Bitte Adminrechte bestätigen — NOVA aktualisiert sich dann und startet neu', 'i-download');
       }
+      // Normalfall: NOVA wird in ~0,5 s beendet, das Overlay bleibt bis dahin sichtbar.
     } else if (res && res.noAsset) {
       $('#up-now').disabled = false;
       $('#up-now').querySelector('span').textContent = 'Jetzt aktualisieren';
@@ -5919,6 +5945,161 @@ const security = (() => {
   return { open, close, analyze, updateChip };
 })();
 
+/* ============================================================ Chrome-GPU-Nebula (hinter der Oberfläche) */
+const chromeNebula = (() => {
+  function hexLin(hex) {
+    hex = (hex || '').trim().replace('#', ''); if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+    const v = (i) => { const c = parseInt(hex.slice(i, i + 2), 16) / 255; return isNaN(c) ? 0 : Math.pow(c, 2.2); };
+    return [v(0), v(2), v(4)];
+  }
+  function accent() {
+    const cs = getComputedStyle(document.body);
+    return [hexLin(cs.getPropertyValue('--acc') || '#00e5ff'), hexLin(cs.getPropertyValue('--acc2') || '#7c4dff')];
+  }
+  // Dunkler, fließender Nebel: höhere Strömung (uSpeed), domain-warping, hohe Schwelle → tiefes Schwarz mit Akzent-Filamenten
+  const FRAG = `precision mediump float;
+    uniform vec2 uRes; uniform float uTime; uniform vec3 uAcc; uniform vec3 uAcc2;
+    uniform float uZoom; uniform float uSpeed; uniform float uInt;
+    float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
+    float noise(vec2 p){vec2 i=floor(p),f=fract(p);float a=hash(i),b=hash(i+vec2(1.,0.)),c=hash(i+vec2(0.,1.)),d=hash(i+vec2(1.,1.));vec2 u=f*f*(3.-2.*f);return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);}
+    float fbm(vec2 p){float v=0.,a=.5;mat2 m=mat2(1.6,1.2,-1.2,1.6);for(int i=0;i<OCT;i++){v+=a*noise(p);p=m*p;a*=.5;}return v;}
+    void main(){
+      vec2 uv=(gl_FragCoord.xy-.5*uRes)/uRes.y; float t=uTime*uSpeed;
+      vec2 q=uv*uZoom;
+      float n1=fbm(q+vec2(t,t*0.5));
+      float n2=fbm(q*2.1+vec2(-t*0.9,t*0.45)+n1*1.15);     // domain-warp → mehr Bewegung
+      float d=n1*0.6+n2*0.65;
+      float neb=pow(smoothstep(0.34,1.12,d),2.1);          // hohe Schwelle → dunkel, nur Filamente leuchten
+      vec3 col=mix(uAcc,uAcc2,clamp(n2*1.25,0.,1.))*neb;
+      col+=uAcc*0.014;                                      // ganz dezenter Akzent-Boden statt reinem Schwarz
+      col*=uInt;                                            // Grunddämpfung (dunkel halten)
+      col=clamp((col*(2.51*col+0.03))/(col*(2.43*col+0.59)+0.14),0.,1.);
+      gl_FragColor=vec4(col,1.0);
+    }`;
+  const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
+
+  function makeRenderer(canvas, host, opts) {
+    let gl = null, uRes, uTime, uZoom, uSpeed, uInt, uAcc, uAcc2;
+    let raf = 0, paused = true, lastF = 0, started = 0, quality = 'mid', ok = false;
+    function build() {
+      gl = canvas.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'low-power' }) || canvas.getContext('experimental-webgl');
+      if (!gl) return false;
+      const OCT = quality === 'high' ? 5 : 4;
+      const cs = (t, s) => { const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh); return gl.getShaderParameter(sh, gl.COMPILE_STATUS) ? sh : null; };
+      const vs = cs(gl.VERTEX_SHADER, VERT), fs = cs(gl.FRAGMENT_SHADER, '#define OCT ' + OCT + '\n' + FRAG);
+      if (!vs || !fs) return false;
+      const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return false;
+      gl.useProgram(prog);
+      const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, 'p'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      uRes = gl.getUniformLocation(prog, 'uRes'); uTime = gl.getUniformLocation(prog, 'uTime');
+      uZoom = gl.getUniformLocation(prog, 'uZoom'); uSpeed = gl.getUniformLocation(prog, 'uSpeed'); uInt = gl.getUniformLocation(prog, 'uInt');
+      uAcc = gl.getUniformLocation(prog, 'uAcc'); uAcc2 = gl.getUniformLocation(prog, 'uAcc2');
+      ok = true; return true;
+    }
+    function resize() {
+      const scale = (quality === 'high' ? 0.8 : 0.55) * Math.min(devicePixelRatio || 1, 1.5);
+      const cw = host.clientWidth, ch = host.clientHeight;
+      const w = Math.max(2, Math.floor(cw * scale)), h = Math.max(2, Math.floor(ch * scale));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; if (gl) gl.viewport(0, 0, w, h); }
+    }
+    function frame(now) {
+      if (paused) { raf = 0; return; }
+      raf = requestAnimationFrame(frame);
+      if (now - lastF < 33) return;                       // ~30fps
+      if (host.clientWidth < 2 || host.clientHeight < 2) return;   // eingeklappt / unsichtbar → nichts zeichnen
+      lastF = now; resize();
+      const [a, b] = accent();
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uTime, (now - started) / 1000);
+      gl.uniform1f(uZoom, opts.zoom); gl.uniform1f(uSpeed, opts.speed); gl.uniform1f(uInt, opts.intensity);
+      gl.uniform3fv(uAcc, a); gl.uniform3fv(uAcc2, b);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    try { new ResizeObserver(() => { if (!paused) resize(); }).observe(host); } catch {}
+    return {
+      setQuality(q) { quality = q; },
+      start() { if (!ok && !build()) return false; paused = false; if (!started) started = performance.now(); if (!raf) { lastF = 0; raf = requestAnimationFrame(frame); } return true; },
+      stop() { paused = true; if (raf) cancelAnimationFrame(raf); raf = 0; },
+    };
+  }
+
+  let tabR = null, sideR = null, active = false;
+  function ensure() {
+    if (!tabR) { const c = $('#tabstrip-neb'); if (c) tabR = makeRenderer(c, $('#tabstrip'), { zoom: 1.25, speed: 0.20, intensity: 0.5 }); }
+    if (!sideR) { const c = $('#sidebar-neb'); if (c) sideR = makeRenderer(c, $('#sidebar'), { zoom: 1.5, speed: 0.12, intensity: 0.5 }); }
+  }
+  function startAll() { [tabR, sideR].forEach((r) => r && r.start()); }
+  function stopAll() { [tabR, sideR].forEach((r) => r && r.stop()); }
+  // Effizienz: bei Fokusverlust / unsichtbar pausieren
+  window.addEventListener('blur', stopAll);
+  window.addEventListener('focus', () => { if (active) startAll(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopAll(); else if (active) startAll(); });
+
+  function apply(q) {
+    q = q || 'mid';
+    if (q === 'low') { active = false; document.body.classList.remove('neb-gpu'); stopAll(); return; }
+    active = true;
+    document.body.classList.add('neb-gpu');
+    ensure();
+    [tabR, sideR].forEach((r) => r && r.setQuality(q));
+    if (!document.hidden && document.hasFocus()) startAll();
+  }
+  return { apply };
+})();
+
+/* ============================================================ NOVA Studio (contained VM) */
+const studio = (() => {
+  const panel = $('#studio-panel');
+  const body = $('#studio-body');
+  let wv = null, openFlag = false, mode = 'full';
+
+  function ensureWv() {
+    if (wv) return wv;
+    wv = document.createElement('webview');
+    wv.id = 'studio-wv';
+    wv.setAttribute('partition', PARTITION);
+    if (state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
+    wv.setAttribute('allowpopups', '');
+    wv.setAttribute('src', 'nova://studio/');   // erst Attribute, dann src (wie mountWebview)
+    body.appendChild(wv);
+    return wv;
+  }
+  function applyMode() {
+    panel.classList.toggle('split', mode === 'split');
+    $('#webviews').classList.toggle('studio-split', openFlag && mode === 'split');
+  }
+  function open() {
+    if (openFlag) return;
+    openFlag = true;
+    ensureWv();
+    panel.classList.remove('hidden');
+    applyMode();
+    requestAnimationFrame(() => panel.classList.add('show'));
+    $('#btn-studio').classList.add('active');
+  }
+  function close() {
+    if (!openFlag) return;
+    openFlag = false;
+    panel.classList.remove('show');
+    $('#webviews').classList.remove('studio-split');
+    $('#btn-studio').classList.remove('active');
+    setTimeout(() => { if (!openFlag) panel.classList.add('hidden'); }, 320);
+  }
+  function toggle() { openFlag ? close() : open(); }
+  function setMode(m) { mode = m; if (openFlag) applyMode(); }
+
+  const btn = $('#btn-studio');
+  if (btn) btn.addEventListener('click', toggle);
+  const cl = $('#studio-close'); if (cl) cl.addEventListener('click', close);
+  const md = $('#studio-mode'); if (md) md.addEventListener('click', () => setMode(mode === 'full' ? 'split' : 'full'));
+
+  return { open, close, toggle };
+})();
+
 /* ============================================================ init */
 (async function init() {
   const data = await window.nova.ready();
@@ -5937,6 +6118,7 @@ const security = (() => {
   teEdit.apply();
   extActions.refresh();
   if (state.settings.tabBarPosition === 'top') document.body.classList.add('tabs-top');
+  try { chromeNebula.apply(state.settings.nebulaQuality || 'mid'); } catch {}   // GPU-Nebel hinter der Oberfläche
   music.applySettings();
   claude.applySettings();
   restoreSession(data.sessionTabs, data.startUrl);

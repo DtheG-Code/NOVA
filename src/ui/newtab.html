@@ -489,17 +489,53 @@ function initNebula(quality) {
     for(int i = 0; i < FBM_OCT; i++){ v += a * noise(p); p = m * p; a *= 0.5; }
     return v;
   }
-  // Sparse, scharf gerenderte Sterne mit Funkeln
-  float starLayer(vec2 uv, float density, float t){
-    vec2 g = floor(uv * density);
-    vec2 f = fract(uv * density) - 0.5;
+  // Helle, realistische Sterne: 3x3-Nachbarschaft (Glow/Spikes reichen über Zellgrenzen),
+  // zufällige Position & Helligkeitsverteilung, Sternfarbe nach Temperatur, weißglühender Kern,
+  // strahlender Halo, Beugungs-Spikes bei den hellsten Sternen, organisches Funkeln.
+  vec3 starField(vec2 uv, float density, float t, float spikeAmt){
+    vec2 gv = uv * density;
+    vec2 g = floor(gv);
+    vec2 fp = fract(gv);
+    vec3 acc = vec3(0.0);
+    for (int y = -1; y <= 1; y++){
+      for (int x = -1; x <= 1; x++){
+        vec2 o = vec2(float(x), float(y));
+        vec2 cell = g + o;
+        float h = hash(cell);
+        float present = step(0.90, h);                       // ~10% der Zellen tragen einen Stern (dezenter)
+        vec2 sp = vec2(hash(cell + 11.3), hash(cell + 47.7)); // zufällige Sub-Position in der Zelle
+        vec2 rel = o + sp - fp;                               // Fragment -> Stern (Zell-Einheiten)
+        float d = length(rel);
+        float mag = pow(hash(cell + 23.1), 4.0);             // Helligkeit: wenige hell, viele schwach
+        float bright = present * (0.10 + mag * 0.8);
+        float ph = h * 60.0;                                  // eigene Phase je Stern
+        float tw = 0.8 + 0.2 * sin(t * 2.4 + ph) * sin(t * 1.3 + ph * 0.7); // sanftes Funkeln, nie ganz aus
+        float core = smoothstep(0.065, 0.0, d);              // kleiner scharfer Kern
+        float halo = exp(-d * 8.0) * 0.28;                   // enger, dezenter Glow
+        float spike = smoothstep(0.28, 0.0, abs(rel.y)) * exp(-abs(rel.x) * 13.0)
+                    + smoothstep(0.28, 0.0, abs(rel.x)) * exp(-abs(rel.y) * 13.0); // kurze, feine Spikes
+        spike *= pow(mag, 3.5) * spikeAmt;                   // nur die allerhellsten strahlen leicht
+        float temp = hash(cell + 5.5);                        // Sternfarbe (Temperatur)
+        vec3 sc = mix(vec3(0.66, 0.78, 1.0), vec3(1.0, 0.97, 0.9), smoothstep(0.0, 0.55, temp));
+        sc = mix(sc, vec3(1.0, 0.84, 0.7), smoothstep(0.55, 1.0, temp));
+        float lum = (core + halo + spike) * bright * tw;
+        acc += mix(sc, vec3(1.0), core * 0.6) * lum;         // Kern weißglühend, Halo getönt
+      }
+    }
+    return acc;
+  }
+  // Feine Hintergrund-Sterne (günstig, eine Zelle) für Tiefe
+  vec3 faintStars(vec2 uv, float density, float t){
+    vec2 gv = uv * density;
+    vec2 g = floor(gv);
     float h = hash(g);
-    float present = step(0.972, h);
-    float d = length(f);
-    float tw = 0.6 + 0.4 * sin(t * 2.0 + h * 40.0);
-    float core = smoothstep(0.06, 0.0, d) * tw;
-    float halo = smoothstep(0.34, 0.0, d) * 0.25 * tw;
-    return present * (core + halo);
+    float present = step(0.93, h);
+    vec2 sp = vec2(hash(g + 3.1), hash(g + 8.3));
+    float d = length(fract(gv) - sp);
+    float tw = 0.55 + 0.45 * sin(t * 2.2 + h * 45.0);
+    float s = smoothstep(0.085, 0.0, d) * tw * present;
+    vec3 sc = mix(vec3(0.7, 0.8, 1.0), vec3(1.0, 0.95, 0.86), hash(g + 5.5));
+    return sc * s * (0.25 + 0.45 * hash(g + 2.2));
   }
   // ACES-ähnliches Tonemapping für den HDR-Look
   vec3 aces(vec3 x){
@@ -570,13 +606,13 @@ function initNebula(quality) {
     float band = fbm(vec2(ruv.x * 1.2 + t, ruv.y * 3.0)) ;
     col += uAcc * smoothstep(0.55, 0.95, band) * neb * 0.5;
 
-    // Sterne (mehrere Dichten für Tiefe)
+    // Sterne: helle strahlende Sterne (mit Spikes) + zwei feine Hintergrundlagen für Tiefe
     vec2 suv = uv + m * 1.4;
     float starBoost = 1.0 + warp * 6.0;
-    float stars = starLayer(suv, 9.0, uTime)
-                + starLayer(suv * 1.7 + 31.4, 16.0, uTime) * 0.8
-                + starLayer(suv * 2.6 + 71.1, 26.0, uTime) * 0.6;
-    col += vec3(0.85, 0.92, 1.0) * stars * 1.4 * starBoost;
+    vec3 starCol = starField(suv, 12.0, uTime, 0.4)
+                 + faintStars(suv * 1.9 + 31.4, 24.0, uTime) * 0.8
+                 + faintStars(suv * 2.8 + 71.1, 38.0, uTime) * 0.55;
+    col += starCol * 1.0 * starBoost;
 
     // ---- Planeten (langsam driftend) — bei Warp ausgeblendet (nur Qualität HIGH)
     #ifdef PLANETS

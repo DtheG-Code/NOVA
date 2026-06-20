@@ -49,14 +49,25 @@ Daten an Drittserver**. Ergebnis als **schön animierter Report** (Risiko-Ring +
   dezenter, animierter Hinweis (kein Pop-up-Spam). Die Liste selbst ist nicht einsehbar — nur der Report zur aktuellen Seite.
 - Beitragen (Hochladen neuer Scans) ist optional per **GitHub-Token** in den Einstellungen (Schreiben braucht Auth, auch bei öffentlichem Repo).
 
+### 🖥️ NOVA Studio — abgeschottete VM (neu in v4.0.6)
+Eine vollständige **PC-VM, die komplett in NOVA läuft** — über das **Monitor-Icon** oben startbar, als **Split** oder **Vollansicht** (wie die anderen Panels).
+- **Hardware-isoliert:** Die VM läuft im **WebAssembly-Sandkasten** (v86) innerhalb eines Webviews. Der Sandkasten *ist* die Grenze — selbst Schadsoftware in der VM kann **niemals** auf den echten Rechner übergreifen.
+- **Container-Modell:** VMs werden als **Snapshots gespeichert** und lassen sich **jederzeit restlos löschen**.
+- **Schön animiert:** Nebula-Design, Reactor-Boot- und Shutdown-Animationen, VM-Bibliothek.
+- **Linux** ist sofort startklar (mitgeliefert); **ReactOS (Windows-Look)** wird beim ersten Start einmalig geladen.
+
 ---
 
 ## ✨ Weitere Features
 
 - 🎨 **Nebula-Design** — animierte Menüs, Akzentfarben, Hyperraum-Sprung beim Laden
-- 🌌 **Echte GPU-Nebula auf der Startseite** (WebGL, volumetrischer fbm-Nebel + Sterne + Planeten + ACES-HDR) —
-  Qualitätsstufen in den Einstellungen: **Niedrig** (CSS, sparsam) · **Mittel** (GPU, effizient) · **Hoch** (volle 3D-Nebula).
+- 🌌 **Echte GPU-Nebula auf der Startseite** (WebGL, volumetrischer fbm-Nebel + **realistische, strahlende Sterne**
+  mit Helligkeitsverteilung, Sternfarben, Beugungs-Spikes & organischem Funkeln + Planeten + ACES-HDR) —
+  Qualitätsstufen: **Niedrig** (CSS) · **Mittel** (GPU) · **Hoch** (volle 3D-Nebula).
   Hintergrund-Tabs pausieren automatisch (auch bei 100 Tabs flüssig), Auflösung & FPS skalieren je Stufe.
+- 🪐 **GPU-Nebula in Tableiste & Sidebar** (neu in v4.0.6) — je ein effizienter WebGL-Nebel rendert gezielt
+  hinter der **Top-Tableiste** und der **Sidebar** (dunkel, fließend, in deiner Akzentfarbe). Menüs/Popovers
+  bekommen mehrschichtigen, swirlenden Nebel statt flacher CSS-Verläufe. Pausiert bei Fokusverlust, 30 fps → sparsam.
 - 🧭 **Tab-Leiste oben oder seitlich** (mit animiertem Nebula)
 - 🛡️ **NOVA Shield** — Adblock + Tracking-Schutz (AdGuard/EasyList/uBlock-Listen, Cookie-Banner, Dark-Mode)
 - 🪟 **Spaces, Split View, angepinnte Tabs, Tab-Vorschauen** — mit smoothen Ein-/Ausblend-Animationen
@@ -67,7 +78,10 @@ Daten an Drittserver**. Ergebnis als **schön animierter Report** (Risiko-Ring +
   (Toolbar-Icons in der Topbar; MV3-Service-Worker-Erweiterungen sind im Widevine-Build technisch begrenzt)
 - 📊 **Netzwerk-Monitor** — Live-Bandbreite pro Tab
 - ⬇️ **Download-Manager** — Pause/Resume, Gesamt- & Einzel-Tempolimit
-- 🔄 **Auto-Updater** — prüft GitHub-Releases, aktualisiert nur nach Zustimmung
+- 🔄 **Auto-Updater mit Nebula-UI** (überarbeitet in v4.0.6) — prüft GitHub-Releases, aktualisiert nur nach
+  Zustimmung, **in-place genau am Startort der NOVA.exe** (auch bei Verknüpfungen, UAC nur wenn nötig) und
+  **startet automatisch neu**. **Keine sichtbare Konsole** mehr: ein animierter **Nebula-Splash** (in-App-Overlay
+  beim Beenden + randloses Splash-Fenster während des Datei-Tauschs) statt CMD-Fenster.
 - ⭐ **Edge-Favoriten-Import**, Ordner per Drag & Drop, Befehlspalette (Strg + K)
 - ⚙️ **Einstellungen** — Name, Suchmaschine, Akzentfarbe/Custom, Tab-Position, Filterlisten, KI-Agent-Schritte
 

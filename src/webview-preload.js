@@ -14,6 +14,14 @@ if (location.protocol === 'nova:') {
     onNebula: (cb) => ipcRenderer.on('newtab:nebula', (_e, d) => cb(d)),
     // Agent-Modus: Suchbegriff als Ziel an den Browser (Host-Renderer) → NOVA Operator
     agent: (goal) => ipcRenderer.sendToHost('nova-agent', goal),
+    // ---- NOVA Studio (contained VM) ----
+    studioList: () => ipcRenderer.invoke('studio:list'),
+    studioSave: (meta, state) => ipcRenderer.invoke('studio:save', meta, state),
+    studioLoad: (id) => ipcRenderer.invoke('studio:load', id),
+    studioDelete: (id) => ipcRenderer.invoke('studio:delete', id),
+    studioImage: (os) => ipcRenderer.invoke('studio:image', os),
+    studioDownload: (os) => ipcRenderer.invoke('studio:download', os),
+    onStudioProgress: (cb) => ipcRenderer.on('studio:progress', (_e, p) => cb(p)),
   });
 } else {
   // Auf normalen Webseiten den Ghostery-Cosmetic-Filter aktivieren:
@@ -50,6 +58,45 @@ if (location.protocol === 'nova:') {
     }
     try { (document.head || document.documentElement).appendChild(s); s.remove(); } catch (e) { /* noop */ }
   };
+
+  // ------------------------------------------------------------------
+  // Google/YouTube-Login-Fix: navigator.userAgentData in der MAIN WORLD auf sauberes
+  // Chrome setzen (passend zum gespooften UA). Sonst sieht Googles Sign-in-JS hier
+  // weiterhin die Marke "Electron" → "Browser nicht unterstützt/sicher".
+  // ------------------------------------------------------------------
+  injectMainWorld(function () {
+    try {
+      var m = navigator.userAgent.match(/Chrome\/(\d+)\.(\d+)\.(\d+)\.(\d+)/);
+      if (!m) return;
+      var major = m[1];
+      var full = m[1] + '.' + m[2] + '.' + m[3] + '.' + m[4];
+      var brands = [
+        { brand: 'Not.A/Brand', version: '24' },
+        { brand: 'Chromium', version: major },
+        { brand: 'Google Chrome', version: major }
+      ];
+      var fullList = [
+        { brand: 'Not.A/Brand', version: '24.0.0.0' },
+        { brand: 'Chromium', version: full },
+        { brand: 'Google Chrome', version: full }
+      ];
+      var data = {
+        brands: brands,
+        mobile: false,
+        platform: 'Windows',
+        getHighEntropyValues: function () {
+          return Promise.resolve({
+            architecture: 'x86', bitness: '64', brands: brands, mobile: false,
+            model: '', platform: 'Windows', platformVersion: '15.0.0',
+            uaFullVersion: full, fullVersionList: fullList
+          });
+        },
+        toJSON: function () { return { brands: brands, mobile: false, platform: 'Windows' }; }
+      };
+      try { Object.defineProperty(navigator, 'userAgentData', { get: function () { return data; }, configurable: true }); } catch (e) {}
+      try { Object.defineProperty(navigator, 'webdriver', { get: function () { return false; }, configurable: true }); } catch (e) {}
+    } catch (e) {}
+  });
 
   // ------------------------------------------------------------------
   // Google/YouTube-Consent-Seite automatisch wegklicken (sonst hängt YouTube Music

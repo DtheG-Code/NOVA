@@ -97,6 +97,7 @@
 <div id="app">
   <!-- ===================== SIDEBAR ===================== -->
   <aside id="sidebar">
+    <canvas id="sidebar-neb"></canvas>
     <div class="sb-head drag">
       <div class="logo no-drag" title="NOVA">
         <svg class="nova-mark"><use href="#i-nova"/></svg>
@@ -156,6 +157,7 @@
   <main id="content">
     <!-- Horizontale Tab-Leiste (Modus „Tabs oben") mit animiertem Nebula -->
     <div id="tabstrip" class="drag">
+      <canvas id="tabstrip-neb"></canvas>
       <div class="nebula"><i></i><i></i><i></i><i></i></div>
       <div id="tabstrip-tabs"></div>
       <button id="tabstrip-new" class="no-drag" title="Neuer Tab (Strg T)"><svg class="ic"><use href="#i-plus"/></svg></button>
@@ -216,6 +218,7 @@
         <button class="icon-btn topbar-tool" data-tool="plugins" id="btn-plugins" title="Plugin-Store"><svg class="ic"><use href="#i-plugin"/></svg></button>
         <span id="ext-actions" class="ext-actions"></span>
         <button class="icon-btn topbar-tool" data-tool="palette" id="btn-palette" title="Befehlspalette (Strg K)"><svg class="ic"><use href="#i-bolt"/></svg></button>
+        <button class="icon-btn" id="btn-studio" title="NOVA Studio — isolierte Windows-VM"><svg class="ic" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg></button>
         <button class="icon-btn" id="btn-edit-topbar" title="Topbar anpassen"><svg class="ic"><use href="#i-sliders"/></svg></button>
       </div>
 
@@ -232,6 +235,18 @@
       <div id="webviews">
         <div id="split-divider" class="hidden"><i></i></div>
         <canvas id="warp-overlay" class="hidden"></canvas>
+
+        <!-- NOVA Studio: contained VM (Webview auf nova://studio) -->
+        <div id="studio-panel" class="hidden">
+          <div class="studio-bar drag">
+            <div class="studio-brand no-drag"><span class="sb-dot"></span>NOVA&nbsp;<b>Studio</b><span class="sb-tag">isolierte VM</span></div>
+            <div class="studio-bar-btns no-drag">
+              <button class="icon-btn slim" id="studio-mode" title="Split / Vollansicht umschalten"><svg class="ic"><use href="#i-split"/></svg></button>
+              <button class="icon-btn slim" id="studio-close" title="NOVA Studio schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+          </div>
+          <div class="studio-body" id="studio-body"></div>
+        </div>
       </div>
 
       <div id="findbar" class="hidden">
@@ -718,6 +733,21 @@
     <button class="btn" id="up-later">Später</button>
     <button class="btn" id="up-page" title="Auf GitHub ansehen"><svg class="ic"><use href="#i-ext"/></svg></button>
     <button class="btn primary" id="up-now"><svg class="ic"><use href="#i-download"/></svg><span>Jetzt aktualisieren</span></button>
+  </div>
+</div>
+
+<!-- ===================== UPDATE-SPLASH (Vollbild-Nebula beim Beenden) ===================== -->
+<div id="upd-splash" class="hidden">
+  <div class="upd-neb n1"></div>
+  <div class="upd-neb n2"></div>
+  <div class="upd-neb n3"></div>
+  <div class="upd-grain"></div>
+  <div class="upd-card">
+    <div class="upd-orbit"><span class="upd-core"></span><i></i><i></i><i></i></div>
+    <div class="upd-title">NOVA <b>wird aktualisiert</b></div>
+    <div class="upd-ver" id="upd-splash-ver">Neue Version wird installiert</div>
+    <div class="upd-bar"><i></i></div>
+    <div class="upd-hint">NOVA schließt sich kurz und startet automatisch neu.</div>
   </div>
 </div>
 
