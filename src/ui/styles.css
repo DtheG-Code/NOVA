@@ -3141,9 +3141,10 @@ body.wa-open #view-area { transition: padding 0.42s var(--spring); }
   font-size: 9px; font-weight: 800; color: #06231a; background: #25d366; box-shadow: 0 0 7px rgba(37,211,102,0.7); border: 1.5px solid var(--bg, #0a0a12); }
 .wa-badge.hidden { display: none; }
 
-/* Eingeklappte Rand-Leisten: weniger Seitenrand → dichter nebeneinander + näher am Fensterrand */
+/* Eingeklappte Rand-Leisten: kein Seitenpadding → Abstand kommt einheitlich aus dem Dock-Manager
+   (Inhalt↔Rail = Rail↔Rail = COLLAPSED_GAP, gleichmäßig) */
 .agent-stage.as-collapsed, .dc-stage.dc-collapsed, .vault-stage.vt-collapsed,
-.share-stage.sh-collapsed, .wa-stage.wa-collapsed { padding-left: 4px; padding-right: 4px; }
+.share-stage.sh-collapsed, .wa-stage.wa-collapsed { padding-left: 0; padding-right: 0; }
 #as-ask-input { height: 40px; padding: 0 13px; border-radius: 11px; background: rgba(0,0,0,0.35); border: 1px solid var(--border-2); color: var(--text); font-size: 14px; }
 #as-ask-input:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
 .as-ask-row { display: flex; justify-content: flex-end; gap: 9px; }

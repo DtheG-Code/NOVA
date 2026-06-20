@@ -4371,7 +4371,7 @@ const claude = (() => {
 // bei jeder Änderung (öffnen/schließen/Seite/einklappen/Resize) alle Panels neu. So gibt es nie eine
 // Überlappung — egal ob 1 oder mehrere Panels links/rechts/eingeklappt sind.
 const dockManager = (() => {
-  const GAP = 3, COLLAPSED_W = 66;
+  const GAP = 3, COLLAPSED_GAP = 6, COLLAPSED_W = 66;
   const panels = new Map();   // id → { el, side, collapsed, full, open, width:()=>number }
   let roAttached = false;
   function ensureRO() {
@@ -4392,9 +4392,10 @@ const dockManager = (() => {
         continue;
       }
       const w = p.collapsed ? COLLAPSED_W : Math.round((p.width && p.width()) || 460);
+      const g = p.collapsed ? COLLAPSED_GAP : GAP;   // eingeklappte Rails: einheitlicher Abstand (= Inhalt↔Rail = Rail↔Rail)
       p.el.style.width = w + 'px';
-      if (p.side === 'left') { p.el.style.left = Math.round(lx) + 'px'; p.el.style.right = 'auto'; lx += w + GAP; leftPad += w + GAP; }
-      else { p.el.style.right = Math.round(rx) + 'px'; p.el.style.left = 'auto'; rx += w + GAP; rightPad += w + GAP; }
+      if (p.side === 'left') { p.el.style.left = Math.round(lx) + 'px'; p.el.style.right = 'auto'; lx += w + g; leftPad += w + g; }
+      else { p.el.style.right = Math.round(rx) + 'px'; p.el.style.left = 'auto'; rx += w + g; rightPad += w + g; }
     }
     va.style.paddingLeft = leftPad ? leftPad + 'px' : '';
     va.style.paddingRight = rightPad ? rightPad + 'px' : '';
