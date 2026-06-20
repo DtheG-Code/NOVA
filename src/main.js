@@ -1929,8 +1929,9 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
     else if (ACC_HEX[accName]) { [A1, A2] = ACC_HEX[accName]; }
 
     // ---- Animierter Nebula-Splash (HTA / mshta, IE-Engine → CSS-Animationen, kein WebGL) ----
-    const hta = `<!doctype html><html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html;charset=utf-8">
-<HTA:APPLICATION ID="nova" BORDER="none" CAPTION="no" SHOWINTASKBAR="yes" SINGLEINSTANCE="yes" SCROLL="no" SYSMENU="no" CONTEXTMENU="no" SELECTION="no" INNERBORDER="no" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="no" />
+    // KEIN <!doctype> — sonst ignoriert mshta das HTA:APPLICATION-Tag und zeigt die Standard-Titelleiste (Dateipfad).
+    const hta = `<html><head><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta http-equiv="Content-Type" content="text/html;charset=utf-8"><title>NOVA</title>
+<HTA:APPLICATION ID="nova" APPLICATIONNAME="NOVA" BORDER="none" CAPTION="no" SHOWINTASKBAR="no" SINGLEINSTANCE="yes" SCROLL="no" SYSMENU="no" CONTEXTMENU="no" SELECTION="no" INNERBORDER="no" MAXIMIZEBUTTON="no" MINIMIZEBUTTON="no" />
 <style>
  html,body{margin:0;height:100%;background:#06060e;overflow:hidden;font-family:'Segoe UI',sans-serif;color:#eef0fa;}
  .neb{position:absolute;border-radius:50%;}
