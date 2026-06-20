@@ -4371,7 +4371,7 @@ const claude = (() => {
 // bei jeder Änderung (öffnen/schließen/Seite/einklappen/Resize) alle Panels neu. So gibt es nie eine
 // Überlappung — egal ob 1 oder mehrere Panels links/rechts/eingeklappt sind.
 const dockManager = (() => {
-  const GAP = 8, COLLAPSED_W = 66;
+  const GAP = 3, COLLAPSED_W = 66;
   const panels = new Map();   // id → { el, side, collapsed, full, open, width:()=>number }
   let roAttached = false;
   function ensureRO() {
