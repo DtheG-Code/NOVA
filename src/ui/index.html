@@ -219,6 +219,10 @@
         <span id="ext-actions" class="ext-actions"></span>
         <button class="icon-btn topbar-tool" data-tool="palette" id="btn-palette" title="Befehlspalette (Strg K)"><svg class="ic"><use href="#i-bolt"/></svg></button>
         <button class="icon-btn" id="btn-studio" title="NOVA Studio — isolierte Windows-VM"><svg class="ic" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg></button>
+        <button class="icon-btn" id="btn-shifter" title="Shifter — hält den PC wach"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.4"/><path class="sh-arc" d="M7.8 7.8a6 6 0 0 0 0 8.4"/><path class="sh-arc" d="M16.2 7.8a6 6 0 0 1 0 8.4"/></svg></button>
+        <button class="icon-btn" id="btn-discord" title="Discord — in NOVA"><svg class="ic dc-ico" viewBox="0 0 24 24"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.036A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></button>
+        <button class="icon-btn" id="btn-vault" title="NOVA Tresor — Passwort-Manager"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/><path d="M9.5 12l1.8 1.8L15 9.8"/></svg></button>
+        <button class="icon-btn" id="btn-share" title="NOVA Share — Datei-Server"><svg class="ic" viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.7-7.94 5 5 0 0 1 9.58-1.6A3.5 3.5 0 0 1 17.5 18z"/><path d="M12 17v-6M9.5 13l2.5-2.5L14.5 13"/></svg></button>
         <button class="icon-btn" id="btn-edit-topbar" title="Topbar anpassen"><svg class="ic"><use href="#i-sliders"/></svg></button>
       </div>
 
@@ -522,6 +526,275 @@
   </div>
 </div>
 
+<!-- ===================== NOVA DISCORD ===================== -->
+<div id="discord-stage" class="dc-stage hidden" aria-hidden="true">
+  <div class="dc-aura"></div>
+  <!-- Eingeklappte Rand-Leiste: zeigt Call-Status länglich nach unten -->
+  <div class="dc-rail" id="dc-rail" title="Discord ausklappen">
+    <span class="dc-rail-logo"><svg viewBox="0 0 24 24"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.036A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span>
+    <span class="dc-rail-label">DISCORD</span>
+    <div class="dc-rail-call hidden" id="dc-rail-call">
+      <span class="dc-rail-live"><i></i>IM&nbsp;CALL</span>
+      <span class="dc-rail-ch" id="dc-rail-ch"></span>
+      <div class="dc-rail-people" id="dc-rail-people"></div>
+    </div>
+    <span class="dc-rail-exp"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+  </div>
+  <div class="dc-frame">
+    <div class="dc-head" id="dc-head" title="Ziehen zum Andocken (links/rechts)">
+      <div class="dc-id">
+        <span class="dc-logo"><svg viewBox="0 0 24 24"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.036A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></span>
+        <div class="dc-id-tx"><b>Discord</b><span id="dc-sub">in NOVA</span></div>
+      </div>
+      <div class="dc-callchip hidden" id="dc-callchip"><span class="dc-dot"></span><span id="dc-callchip-tx">im Call</span></div>
+      <div class="dc-headbtns">
+        <button id="dc-side" class="dc-headbtn" title="Seite wechseln (links/rechts)"><svg viewBox="0 0 24 24"><path d="M9 4v16M4 7l-2 2 2 2M20 7l2 2-2 2"/></svg></button>
+        <button id="dc-full" class="dc-headbtn" title="Vollbild ein/aus"><svg class="dc-ic-full" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><svg class="dc-ic-min" viewBox="0 0 24 24"><path d="M4 8h3a1 1 0 0 0 1-1V4M20 8h-3a1 1 0 0 1-1-1V4M4 16h3a1 1 0 0 1 1 1v3M20 16h-3a1 1 0 0 0-1 1v3"/></svg></button>
+        <button id="dc-reload" class="dc-headbtn" title="Neu laden"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+        <button id="dc-collapse" class="dc-headbtn" title="Einklappen"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button id="dc-close" class="dc-headbtn dc-x" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+    <div class="dc-viewport" id="dc-viewport"><!-- Discord-Webview wird hier eingefügt --></div>
+  </div>
+</div>
+<!-- Maske über dem Webview während des Ziehens (sonst schluckt das Webview die Maus) -->
+<div id="dc-dragmask" class="dc-dragmask hidden"></div>
+<!-- Snap-Vorschau beim Andocken -->
+<div id="dc-snap" class="dc-snap hidden"></div>
+
+<!-- Bildschirmfreigabe-Auswahl (NOVA-eigener Picker für Discord) -->
+<div id="dc-screenpick" class="dc-screenpick hidden" aria-hidden="true">
+  <div class="dc-sp-card">
+    <div class="dc-sp-aura"></div>
+    <div class="dc-sp-head">
+      <span class="dc-sp-logo"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>
+      <div class="dc-sp-titles"><b>Bildschirm teilen</b><span>Wähle, was du in Discord zeigen möchtest</span></div>
+      <button id="dc-sp-cancel" class="dc-sp-x" title="Abbrechen"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="dc-sp-tabs">
+      <button class="dc-sp-tab active" data-kind="screen">Ganzer Bildschirm</button>
+      <button class="dc-sp-tab" data-kind="window">Fenster</button>
+    </div>
+    <div id="dc-sp-grid" class="dc-sp-grid"></div>
+    <div class="dc-sp-foot">
+      <label class="dc-sp-audio"><input type="checkbox" id="dc-sp-audio" checked> System-Ton mit teilen</label>
+      <button id="dc-sp-share" class="dc-sp-share" disabled>Teilen starten</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== NOVA TRESOR (Passwort-Manager) ===================== -->
+<div id="vault-stage" class="vault-stage hidden" aria-hidden="true">
+  <div class="vt-aura"></div>
+  <div class="vt-rail" id="vt-rail" title="Tresor ausklappen">
+    <span class="vt-rail-logo"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/><path d="M9.5 12l1.8 1.8L15 9.8"/></svg></span>
+    <span class="vt-rail-label">TRESOR</span>
+    <span class="vt-rail-state" id="vt-rail-state"></span>
+    <span class="vt-rail-exp"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+  </div>
+  <div class="vt-frame">
+    <div class="vt-head" id="vt-head" title="Ziehen zum Andocken (links/rechts)">
+      <div class="vt-id">
+        <span class="vt-logo"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/><path d="M9.5 12l1.8 1.8L15 9.8"/></svg></span>
+        <div class="vt-id-tx"><b>NOVA&nbsp;<span class="vt-acc">Tresor</span></b><span id="vt-sub">gesperrt</span></div>
+      </div>
+      <div class="vt-timer hidden" id="vt-timer" title="Automatische Sperre bei Inaktivität"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9.5V13l2.4 1.6M9 2.5h6"/></svg><span id="vt-timer-tx">5:00</span></div>
+      <div class="vt-headbtns">
+        <button id="vt-side" class="vt-headbtn" title="Seite wechseln"><svg viewBox="0 0 24 24"><path d="M9 4v16M4 7l-2 2 2 2M20 7l2 2-2 2"/></svg></button>
+        <button id="vt-full" class="vt-headbtn" title="Vollbild ein/aus"><svg class="vt-ic-full" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><svg class="vt-ic-min" viewBox="0 0 24 24"><path d="M4 8h3a1 1 0 0 0 1-1V4M20 8h-3a1 1 0 0 1-1-1V4M4 16h3a1 1 0 0 1 1 1v3M20 16h-3a1 1 0 0 0-1 1v3"/></svg></button>
+        <button id="vt-lock" class="vt-headbtn" title="Sofort sperren"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
+        <button id="vt-collapse" class="vt-headbtn" title="Einklappen"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button id="vt-close" class="vt-headbtn vt-x" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+    <div class="vt-viewport">
+      <!-- Entsperren / Anlegen -->
+      <div class="vt-lock" id="vt-lock-screen">
+        <div class="vt-hero">
+          <div class="vt-shield"><svg viewBox="0 0 24 24"><path d="M12 2l9 3.3v6c0 5.3-3.8 9.2-9 10.7C6.8 20.5 3 16.6 3 11.3v-6z"/><path d="M9 12l2.2 2.2L15.5 9.5"/></svg><span class="vt-shield-ring"></span><span class="vt-shield-ring r2"></span></div>
+          <h2 id="vt-lock-title">Tresor entsperren</h2>
+          <p id="vt-lock-sub">Master-Passwort eingeben</p>
+        </div>
+        <form id="vt-lock-form" class="vt-lock-form" autocomplete="off">
+          <div class="vt-field"><svg class="vt-fi" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><input type="password" id="vt-master" placeholder="Master-Passwort" autocomplete="new-password" spellcheck="false"><button type="button" class="vt-eye" data-for="vt-master" title="Anzeigen"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+          <div class="vt-field vt-confirm hidden" id="vt-confirm-wrap"><svg class="vt-fi" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg><input type="password" id="vt-master2" placeholder="Master-Passwort bestätigen" autocomplete="new-password" spellcheck="false"></div>
+          <div class="vt-strength hidden" id="vt-strength"><div class="vt-strength-bar"><i id="vt-strength-fill"></i></div><span id="vt-strength-tx">…</span></div>
+          <div class="vt-lock-msg" id="vt-lock-msg"></div>
+          <button type="submit" class="vt-lock-go" id="vt-lock-go">Entsperren</button>
+        </form>
+        <div class="vt-lock-foot"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/></svg><span id="vt-lock-foot-tx">AES-256-GCM · scrypt · Schlüssel wird nie gespeichert</span></div>
+      </div>
+
+      <!-- Tresor (entsperrt) -->
+      <div class="vt-main hidden" id="vt-main">
+        <div class="vt-toolbar">
+          <div class="vt-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="vt-search" placeholder="Suchen …" spellcheck="false"></div>
+          <button id="vt-gen-open" class="vt-tb-btn" title="Passwort-Generator"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="8.5" cy="8.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="15.5" r="1.6" fill="currentColor" stroke="none"/></svg></button>
+          <button id="vt-settings" class="vt-tb-btn" title="Master-Passwort ändern"><svg viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h6M14 18h6"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg></button>
+          <button id="vt-new" class="vt-tb-btn vt-new" title="Neuer Eintrag"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
+        <div class="vt-list" id="vt-list"></div>
+        <div class="vt-empty hidden" id="vt-empty">
+          <svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/></svg>
+          <b>Noch keine Einträge</b><span>Lege deinen ersten Login an — oder speichere ihn beim nächsten Anmelden.</span>
+        </div>
+      </div>
+
+      <!-- Editor (Anlegen/Bearbeiten) -->
+      <div class="vt-editor hidden" id="vt-editor">
+        <div class="vt-ed-head">
+          <button id="vt-ed-back" class="vt-ed-iconbtn" title="Zurück"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+          <b id="vt-ed-title">Neuer Eintrag</b>
+          <button id="vt-ed-del" class="vt-ed-iconbtn vt-ed-del hidden" title="Löschen"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13h10l1-13"/></svg></button>
+        </div>
+        <div class="vt-ed-body">
+          <label class="vt-lbl">Titel<input id="vt-f-title" class="vt-in" spellcheck="false" placeholder="z. B. GitHub"></label>
+          <label class="vt-lbl">Website<input id="vt-f-url" class="vt-in" spellcheck="false" placeholder="example.com"></label>
+          <label class="vt-lbl">Benutzername / E-Mail<div class="vt-inrow"><input id="vt-f-user" class="vt-in" spellcheck="false" autocomplete="off"><button class="vt-mini" data-copy="username" title="Kopieren"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></label>
+          <label class="vt-lbl">Passwort<div class="vt-inrow"><input id="vt-f-pass" class="vt-in" type="password" autocomplete="new-password" spellcheck="false"><button class="vt-mini vt-eye" data-for="vt-f-pass" title="Anzeigen"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button><button class="vt-mini" id="vt-f-gen" title="Generieren"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><circle cx="8.5" cy="8.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="15.5" cy="15.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1.6" fill="currentColor" stroke="none"/><circle cx="8.5" cy="15.5" r="1.6" fill="currentColor" stroke="none"/></svg></button><button class="vt-mini" data-copy="password" title="Kopieren"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div><div class="vt-meter"><i id="vt-f-meter"></i></div></label>
+          <label class="vt-lbl">Notizen<textarea id="vt-f-notes" class="vt-in vt-ta" spellcheck="false" rows="3"></textarea></label>
+        </div>
+        <div class="vt-ed-foot"><button id="vt-ed-cancel" class="vt-btn ghost">Abbrechen</button><button id="vt-ed-save" class="vt-btn go">Speichern</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="vt-dragmask" class="dc-dragmask hidden"></div>
+<div id="vt-snap" class="dc-snap hidden"></div>
+
+<!-- Passwort-Generator (Popover) -->
+<div id="vt-gen-pop" class="vt-gen-pop hidden" aria-hidden="true">
+  <div class="vt-gen-card">
+    <div class="vt-gen-aura"></div>
+    <div class="vt-gen-head"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.4"/><circle cx="16" cy="16" r="1.4"/><circle cx="16" cy="8" r="1.4"/><circle cx="8" cy="16" r="1.4"/><circle cx="12" cy="12" r="1.4"/></svg><b>Passwort-Generator</b><button id="vt-gen-x" class="vt-gen-xbtn"><svg class="ic"><use href="#i-x"/></svg></button></div>
+    <div class="vt-gen-out" id="vt-gen-out">…</div>
+    <div class="vt-gen-row"><span>Länge</span><input type="range" id="vt-gen-len" min="8" max="64" value="20"><b id="vt-gen-lenv">20</b></div>
+    <div class="vt-gen-opts">
+      <label class="vt-chk"><input type="checkbox" id="vt-gen-upper" checked><span>A–Z</span></label>
+      <label class="vt-chk"><input type="checkbox" id="vt-gen-lower" checked><span>a–z</span></label>
+      <label class="vt-chk"><input type="checkbox" id="vt-gen-digits" checked><span>0–9</span></label>
+      <label class="vt-chk"><input type="checkbox" id="vt-gen-symbols" checked><span>!@#</span></label>
+    </div>
+    <div class="vt-gen-foot"><button id="vt-gen-regen" class="vt-btn ghost">Neu</button><button id="vt-gen-copy" class="vt-btn ghost">Kopieren</button><button id="vt-gen-use" class="vt-btn go">Übernehmen</button></div>
+  </div>
+</div>
+
+<!-- Master-Passwort ändern -->
+<div id="vt-master-dlg" class="vt-dlg hidden" aria-hidden="true">
+  <div class="vt-dlg-card">
+    <div class="vt-dlg-aura"></div>
+    <div class="vt-dlg-head"><b>Master-Passwort ändern</b><button id="vt-md-x" class="vt-gen-xbtn"><svg class="ic"><use href="#i-x"/></svg></button></div>
+    <div class="vt-dlg-body">
+      <input type="password" id="vt-md-old" class="vt-in" placeholder="Aktuelles Master-Passwort" autocomplete="off">
+      <input type="password" id="vt-md-new" class="vt-in" placeholder="Neues Master-Passwort" autocomplete="new-password">
+      <input type="password" id="vt-md-new2" class="vt-in" placeholder="Neu bestätigen" autocomplete="new-password">
+      <div class="vt-lock-msg" id="vt-md-msg"></div>
+    </div>
+    <div class="vt-dlg-foot"><button id="vt-md-cancel" class="vt-btn ghost">Abbrechen</button><button id="vt-md-save" class="vt-btn go">Ändern</button></div>
+  </div>
+</div>
+
+<!-- Speichern-Angebot (von einer Webseite erkannt) -->
+<div id="vault-save" class="vault-save hidden" aria-hidden="true">
+  <div class="vs-card">
+    <div class="vs-aura"></div>
+    <div class="vs-head"><span class="vs-logo"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/><path d="M9.5 12l1.8 1.8L15 9.8"/></svg></span><div class="vs-titles"><b>Im Tresor speichern?</b><span id="vs-host">—</span></div></div>
+    <div class="vs-row"><span class="vs-k">Benutzer</span><span class="vs-v" id="vs-user">—</span></div>
+    <div class="vs-row"><span class="vs-k">Passwort</span><span class="vs-v" id="vs-pass">••••••••</span></div>
+    <div class="vs-foot"><button id="vs-no" class="vt-btn ghost">Nicht jetzt</button><button id="vs-yes" class="vt-btn go">Speichern</button></div>
+  </div>
+</div>
+
+<!-- ===================== NOVA SHARE (Datei-Server) ===================== -->
+<div id="share-stage" class="share-stage hidden" aria-hidden="true">
+  <div class="sh-aura"></div>
+  <div class="sh-rail" id="sh-rail" title="Share ausklappen">
+    <span class="sh-rail-logo"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.7-7.94 5 5 0 0 1 9.58-1.6A3.5 3.5 0 0 1 17.5 18z"/><path d="M12 17v-6M9.5 13l2.5-2.5L14.5 13"/></svg></span>
+    <span class="sh-rail-label">SHARE</span>
+    <span class="sh-rail-state" id="sh-rail-state"></span>
+    <span class="sh-rail-exp"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+  </div>
+  <div class="sh-frame">
+    <div class="sh-head" id="sh-head" title="Ziehen zum Andocken (links/rechts)">
+      <div class="sh-id">
+        <span class="sh-logo"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.7-7.94 5 5 0 0 1 9.58-1.6A3.5 3.5 0 0 1 17.5 18z"/><path d="M12 17v-6M9.5 13l2.5-2.5L14.5 13"/></svg></span>
+        <div class="sh-id-tx"><b>NOVA&nbsp;<span class="sh-acc">Share</span></b><span id="sh-status">nicht verbunden</span></div>
+      </div>
+      <div class="sh-headbtns">
+        <button id="sh-side" class="sh-headbtn" title="Seite wechseln"><svg viewBox="0 0 24 24"><path d="M9 4v16M4 7l-2 2 2 2M20 7l2 2-2 2"/></svg></button>
+        <button id="sh-full" class="sh-headbtn" title="Vollbild ein/aus"><svg class="sh-ic-full" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><svg class="sh-ic-min" viewBox="0 0 24 24"><path d="M4 8h3a1 1 0 0 0 1-1V4M20 8h-3a1 1 0 0 1-1-1V4M4 16h3a1 1 0 0 1 1 1v3M20 16h-3a1 1 0 0 0-1 1v3"/></svg></button>
+        <button id="sh-logout" class="sh-headbtn hidden" title="Abmelden"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg></button>
+        <button id="sh-collapse" class="sh-headbtn" title="Einklappen"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button id="sh-close" class="sh-headbtn sh-x" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+    <div class="sh-viewport">
+      <!-- Anmelden -->
+      <div class="sh-login" id="sh-login">
+        <div class="sh-hero">
+          <div class="sh-heroorb"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.7-7.94 5 5 0 0 1 9.58-1.6A3.5 3.5 0 0 1 17.5 18z"/><path d="M12 17v-6M9.3 13.2 12 10.5l2.7 2.7"/></svg><span class="sh-heroorb-ring"></span><span class="sh-heroorb-ring r2"></span></div>
+          <h2>Mit deinem Server verbinden</h2>
+          <p>Server-Adresse und Konto eingeben</p>
+        </div>
+        <form id="sh-login-form" class="sh-login-form" autocomplete="off">
+          <label class="sh-lbl">Server-Adresse<input id="sh-server" class="sh-in" placeholder="https://share.deinedomain.de" spellcheck="false"></label>
+          <label class="sh-lbl">Benutzername<input id="sh-user" class="sh-in" spellcheck="false" autocomplete="username"></label>
+          <label class="sh-lbl">Passwort<div class="sh-inrow"><input id="sh-pass" class="sh-in" type="password" autocomplete="current-password"><button type="button" class="sh-eye" data-for="sh-pass" title="Anzeigen"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div></label>
+          <div class="sh-msg" id="sh-login-msg"></div>
+          <button type="submit" class="sh-go" id="sh-login-go">Anmelden</button>
+        </form>
+        <div class="sh-login-foot"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span>HTTPS empfohlen · Token bleibt lokal auf diesem Gerät</span></div>
+      </div>
+
+      <!-- Verbunden -->
+      <div class="sh-main hidden" id="sh-main">
+        <div class="sh-tabs">
+          <button class="sh-tab active" data-tab="files">Dateien</button>
+          <button class="sh-tab hidden" data-tab="admin" id="sh-tab-admin">Verwaltung</button>
+          <div class="sh-quota" id="sh-quota" title="Belegter Speicher"><div class="sh-quota-bar"><i id="sh-quota-fill"></i></div><span id="sh-quota-tx">—</span></div>
+        </div>
+        <!-- Dateien -->
+        <div class="sh-pane" id="sh-pane-files">
+          <div class="sh-toolbar2">
+            <div class="sh-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="sh-search" placeholder="Dateien suchen …" spellcheck="false"></div>
+            <button id="sh-refresh" class="sh-tb2" title="Aktualisieren"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+            <button id="sh-upload" class="sh-tb2 sh-up" title="Dateien hochladen"><svg viewBox="0 0 24 24"><path d="M12 19V7M6 13l6-6 6 6M5 21h14"/></svg><span>Hochladen</span></button>
+          </div>
+          <div class="sh-progress hidden" id="sh-progress"><div class="sh-prog-bar"><i id="sh-prog-fill"></i></div><span id="sh-prog-tx"></span></div>
+          <div class="sh-files" id="sh-files"></div>
+          <div class="sh-empty hidden" id="sh-empty"><svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.7-7.94 5 5 0 0 1 9.58-1.6A3.5 3.5 0 0 1 17.5 18z"/></svg><b>Noch keine Dateien</b><span>Lade die erste Datei hoch — alle Konten können sie dann herunterladen.</span></div>
+        </div>
+        <!-- Verwaltung (Admin) -->
+        <div class="sh-pane hidden" id="sh-pane-admin">
+          <div class="sh-admin-stats" id="sh-admin-stats"></div>
+          <div class="sh-toolbar2"><b class="sh-admin-h">Konten</b><button id="sh-user-new" class="sh-tb2 sh-up" title="Konto anlegen"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Konto</span></button></div>
+          <div class="sh-users" id="sh-users"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="sh-dragmask" class="dc-dragmask hidden"></div>
+<div id="sh-snap" class="dc-snap hidden"></div>
+
+<!-- Konto anlegen/bearbeiten (Admin) -->
+<div id="sh-user-dlg" class="vt-dlg hidden" aria-hidden="true">
+  <div class="vt-dlg-card sh-user-card">
+    <div class="vt-dlg-aura"></div>
+    <div class="vt-dlg-head"><b id="sh-ud-title">Konto anlegen</b><button id="sh-ud-x" class="vt-gen-xbtn"><svg class="ic"><use href="#i-x"/></svg></button></div>
+    <div class="vt-dlg-body">
+      <input id="sh-ud-user" class="vt-in" placeholder="Benutzername" spellcheck="false" autocomplete="off">
+      <input id="sh-ud-pass" class="vt-in" type="password" placeholder="Passwort (min. 8 Zeichen)" autocomplete="new-password">
+      <div class="sh-ud-row"><span class="sh-ud-q">Kontingent</span><input id="sh-ud-quota" class="vt-in sh-num" type="number" min="0" step="1" value="2"><select id="sh-ud-quota-unit" class="sh-unit"><option>MB</option><option selected>GB</option></select></div>
+      <div class="sh-ud-row"><span class="sh-ud-q">Max. Dateigröße</span><input id="sh-ud-max" class="vt-in sh-num" type="number" min="0" step="1" value="512"><select id="sh-ud-max-unit" class="sh-unit"><option selected>MB</option><option>GB</option></select></div>
+      <label class="sh-chk2"><input type="checkbox" id="sh-ud-admin"> Administrator-Rechte</label>
+      <div class="vt-lock-msg" id="sh-ud-msg"></div>
+    </div>
+    <div class="vt-dlg-foot"><button id="sh-ud-cancel" class="vt-btn ghost">Abbrechen</button><button id="sh-ud-save" class="vt-btn go">Speichern</button></div>
+  </div>
+</div>
+
 <!-- ===================== AGENT-ERGEBNIS-KARTE ===================== -->
 <div id="agent-result" class="agent-result hidden">
   <div class="ar-card">
@@ -742,6 +1015,19 @@
     <div class="upd-bar"><i></i></div>
     <div class="upd-hint">NOVA schließt sich kurz und startet automatisch neu.</div>
   </div>
+</div>
+
+<!-- ===================== SHIFTER (PC wach halten) ===================== -->
+<div id="shifter-pop" class="topbar-pop hidden">
+  <div class="sh-head">
+    <div class="sh-orb" id="sh-orb"><i></i><i></i><i></i><span></span></div>
+    <div class="sh-meta">
+      <div class="sh-title">Shifter</div>
+      <div class="sh-sub" id="sh-sub">Hält deinen PC wach</div>
+    </div>
+  </div>
+  <button class="btn sh-toggle" id="sh-toggle"><svg class="ic"><use href="#i-bolt"/></svg><span>Aktivieren</span></button>
+  <div class="sh-note">Verhindert Sperren &amp; Energiesparen — direkt auf System-Ebene, ohne Mausbewegung. Läuft unauffällig im Hintergrund.</div>
 </div>
 
 <div id="toasts"></div>

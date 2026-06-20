@@ -21,6 +21,7 @@ if (location.protocol === 'nova:') {
     studioDelete: (id) => ipcRenderer.invoke('studio:delete', id),
     studioImage: (os) => ipcRenderer.invoke('studio:image', os),
     studioDownload: (os) => ipcRenderer.invoke('studio:download', os),
+    studioState: (os) => ipcRenderer.invoke('studio:state', os),
     onStudioProgress: (cb) => ipcRenderer.on('studio:progress', (_e, p) => cb(p)),
     studioCmd: (cmd) => ipcRenderer.sendToHost('studio-cmd', cmd),   // Panel-Befehle (split/close) an den Host
   });
@@ -98,6 +99,199 @@ if (location.protocol === 'nova:') {
       try { Object.defineProperty(navigator, 'webdriver', { get: function () { return false; }, configurable: true }); } catch (e) {}
     } catch (e) {}
   });
+
+  // ------------------------------------------------------------------
+  // NOVA Discord: Call-Status auslesen (in Sprachkanal? welcher? mit wem?) und an den Host melden,
+  // damit die eingeklappte Rand-Leiste das anzeigt. Best-Effort über stabile Klassen-Präfixe.
+  // ------------------------------------------------------------------
+  if (/(^|\.)discord\.com$/.test(location.hostname)) {
+    let last = '';
+    const readCall = () => {
+      let inCall = false, channel = '', people = [];
+      try {
+        const panel = document.querySelector('[class*="rtcConnectionStatus"]');
+        const discBtn = document.querySelector('button[aria-label*="Disconnect" i], button[aria-label*="trennen" i], button[aria-label*="Verbindung trennen" i]');
+        inCall = !!panel || !!discBtn;
+        if (inCall) {
+          const root = (panel && panel.closest('section, [class*="panels"], [class*="wrapper"]')) || document;
+          const lines = root.querySelectorAll('[class*="subtext"], [class*="channel"], [class*="title"], [class*="rtcConnectionStatus"] + * *');
+          for (const l of lines) { const t = (l.textContent || '').trim(); if (t && t.length < 42 && !/connect|verbind|voice|sprach|stimme|stumm|signal/i.test(t)) { channel = t; break; } }
+          document.querySelectorAll('[class*="voiceUser"] img[alt], [class*="voiceUser"] [class*="username"], [class*="participantsWrapper"] [class*="username"]').forEach((u) => {
+            const n = (u.getAttribute('alt') || u.textContent || '').trim();
+            if (n && people.length < 16 && !people.includes(n)) people.push(n);
+          });
+        }
+      } catch (e) {}
+      const j = JSON.stringify({ inCall, channel, people });
+      if (j !== last) { last = j; try { ipcRenderer.sendToHost('discord-call', { inCall, channel, people }); } catch (e) {} }
+    };
+    setInterval(readCall, 2500);
+    setTimeout(readCall, 1500);
+  }
+
+  // ------------------------------------------------------------------
+  // NOVA Vault — Login-Felder erkennen + animiert ausfüllen.
+  // Inline-Chip in einem GESCHLOSSENEN Shadow-DOM (von der Seite weder lesbar noch stylebar).
+  // Passwörter kommen erst auf Klick vom Hauptprozess und werden hier nur ins Feld getippt.
+  // ------------------------------------------------------------------
+  (function novaVaultAutofill() {
+    const origin = location.origin || (location.protocol + '//' + location.host);
+    let matches = [];            // vom Host: [{id,title,username}] — NIE Passwörter
+    let groups = [];             // erkannte Login-Gruppen [{user,pass,form}]
+    let activeGroup = null, chipAnchor = null, chipHost = null, chipRoot = null, chipVisible = false, chipHovered = false;
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    function setNativeValue(el, value) {
+      try { const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value'); if (d && d.set) d.set.call(el, value); else el.value = value; }
+      catch { try { el.value = value; } catch (e) {} }
+    }
+    function isVisible(el) { try { const r = el.getBoundingClientRect(); return r.width > 24 && r.height > 8 && r.bottom > 0 && r.right > 0; } catch { return false; } }
+
+    function findGroups() {
+      const out = [];
+      const pws = Array.from(document.querySelectorAll('input[type="password"]')).filter(isVisible);
+      for (const pass of pws) {
+        const scope = pass.form || pass.closest('form') || document;
+        const cands = Array.from(scope.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input:not([type])')).filter(isVisible);
+        let user = null;
+        for (const c of cands) { if (c !== pass && (pass.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING)) user = c; }  // letztes Feld vor dem Passwort
+        if (!user && cands.length) user = cands[cands.length - 1];
+        out.push({ user, pass, form: pass.form || pass.closest('form') });
+      }
+      return out;
+    }
+    function refresh() {
+      groups = findGroups();
+      try { ipcRenderer.sendToHost('vault-detect', { origin, hasLogin: groups.length > 0 }); } catch (e) {}
+      if (!groups.length) hideChip();
+    }
+
+    // ---- Animiertes Tippen ins Feld (Glow + zeichenweise, framework-kompatibel) ----
+    async function typeInto(el, value) {
+      if (!el) return;
+      try { el.focus(); } catch (e) {}
+      const prev = el.style.boxShadow, prevT = el.style.transition;
+      el.style.transition = 'box-shadow .18s ease';
+      el.style.boxShadow = '0 0 0 2px rgba(124,140,255,.95), 0 0 22px rgba(124,140,255,.6)';
+      setNativeValue(el, '');
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      const step = value.length > 28 ? 6 : 14;
+      for (let i = 0; i < value.length; i++) {
+        setNativeValue(el, value.slice(0, i + 1));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        await sleep(step);
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+      setTimeout(() => { el.style.boxShadow = prev; el.style.transition = prevT; }, 700);
+    }
+    async function fillActive(data) {
+      const g = activeGroup || groups[0]; if (!g || !data) return;
+      hideChip();
+      if (g.user && data.username) { await typeInto(g.user, data.username); await sleep(90); }
+      if (g.pass && data.password != null) await typeInto(g.pass, String(data.password));
+    }
+    function requestFill(id) { try { ipcRenderer.sendToHost('vault-fill-request', { id, origin }); } catch (e) {} }
+
+    // ---- Inline-Chip (Shadow-DOM) ----
+    function ensureChip() {
+      if (chipHost) return;
+      chipHost = document.createElement('div');
+      chipHost.style.cssText = 'all:initial;position:fixed;z-index:2147483647;top:-9999px;left:-9999px;';
+      chipRoot = chipHost.attachShadow({ mode: 'closed' });
+      chipRoot.innerHTML =
+        '<style>'
+        + ':host{all:initial}*{box-sizing:border-box;font-family:Inter,Segoe UI,system-ui,sans-serif}'
+        + '.wrap{width:268px;border-radius:14px;overflow:hidden;opacity:0;transform:translateY(-6px) scale(.98);transition:opacity .16s,transform .16s;'
+        + 'background:linear-gradient(165deg,rgba(18,17,34,.98),rgba(8,8,16,.99));border:1px solid rgba(124,140,255,.42);'
+        + 'box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 40px rgba(124,140,255,.22);backdrop-filter:blur(20px)}'
+        + '.wrap.on{opacity:1;transform:none}'
+        + '.hd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.07)}'
+        + '.orb{width:20px;height:20px;border-radius:6px;background:linear-gradient(150deg,#5865f2,#9b8cff);box-shadow:0 0 14px rgba(124,140,255,.6);flex:none}'
+        + '.hd b{color:#fff;font-size:12px;font-weight:700;letter-spacing:.3px}.hd span{color:#9aa0c0;font-size:10px;margin-left:auto}'
+        + '.list{max-height:230px;overflow-y:auto;padding:6px}'
+        + '.row{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 9px;border:0;border-radius:9px;background:transparent;cursor:pointer;color:#e8e9ff;transition:background .12s}'
+        + '.row:hover{background:rgba(124,140,255,.16)}'
+        + '.key{width:26px;height:26px;border-radius:7px;flex:none;display:flex;align-items:center;justify-content:center;background:rgba(124,140,255,.18)}'
+        + '.key svg{width:15px;height:15px;stroke:#aab2ff;fill:none;stroke-width:2}'
+        + '.tx{display:flex;flex-direction:column;min-width:0}.tx b{font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+        + '.tx i{font-size:11px;color:#9aa0c0;font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+        + '</style>'
+        + '<div class="wrap"><div class="hd"><span class="orb"></span><b>NOVA Tresor</b><span>automatisch ausfüllen</span></div><div class="list"></div></div>';
+      const wrap = chipRoot.querySelector('.wrap');
+      wrap.addEventListener('mouseenter', () => { chipHovered = true; });
+      wrap.addEventListener('mouseleave', () => { chipHovered = false; });
+      document.documentElement.appendChild(chipHost);
+    }
+    function renderChip() {
+      if (!chipRoot) return;
+      const keySvg = '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2"/></svg>';
+      chipRoot.querySelector('.list').innerHTML = matches.map((m) =>
+        '<button class="row" data-id="' + esc(m.id) + '"><span class="key">' + keySvg + '</span>'
+        + '<span class="tx"><b>' + esc(m.title || origin) + '</b><i>' + esc(m.username || '—') + '</i></span></button>').join('');
+      chipRoot.querySelectorAll('.row').forEach((b) => b.addEventListener('click', () => requestFill(b.getAttribute('data-id'))));
+    }
+    function positionChip() {
+      if (!chipHost || !chipAnchor) return;
+      const r = chipAnchor.getBoundingClientRect();
+      chipHost.style.top = Math.max(8, Math.min(window.innerHeight - 80, r.bottom + 6)) + 'px';
+      chipHost.style.left = Math.max(8, Math.min(window.innerWidth - 276, r.left)) + 'px';
+    }
+    function showChip() {
+      if (!matches.length) return;
+      ensureChip(); renderChip(); positionChip();
+      const wrap = chipRoot.querySelector('.wrap');
+      requestAnimationFrame(() => wrap.classList.add('on'));
+      chipVisible = true;
+    }
+    function hideChip() {
+      if (!chipHost || !chipVisible) return;
+      const wrap = chipRoot && chipRoot.querySelector('.wrap'); if (wrap) wrap.classList.remove('on');
+      chipHost.style.top = '-9999px'; chipVisible = false;
+    }
+
+    // ---- Host → Preload ----
+    ipcRenderer.on('vault-offer', (_e, data) => { matches = (data && data.matches) || []; if (chipVisible) renderChip(); });
+    ipcRenderer.on('vault-do-fill', (_e, data) => { fillActive(data); });
+    ipcRenderer.on('vault-clear', () => { matches = []; hideChip(); });
+
+    // ---- Feld-Fokus → Chip zeigen ----
+    document.addEventListener('focusin', (e) => {
+      const t = e.target;
+      if (!t || !t.matches || !t.matches('input')) return;
+      const g = groups.find((x) => x.user === t || x.pass === t);
+      if (g && matches.length) { activeGroup = g; chipAnchor = t; showChip(); }
+    }, true);
+    document.addEventListener('focusout', () => { setTimeout(() => { if (!chipHovered) hideChip(); }, 200); }, true);
+    window.addEventListener('scroll', () => { if (chipVisible) positionChip(); }, true);
+    window.addEventListener('resize', () => { if (chipVisible) positionChip(); });
+
+    // ---- Neue Zugangsdaten zum Speichern anbieten (Submit / Enter im Passwortfeld) ----
+    function offerSave(form) {
+      const g = groups.find((x) => x.form === form) || groups.find((x) => x.pass && form && form.contains && form.contains(x.pass)) || groups[0];
+      if (!g || !g.pass) return;
+      const password = g.pass.value || '';
+      if (!password) return;
+      try { ipcRenderer.sendToHost('vault-save-offer', { origin, url: location.href, title: document.title, username: g.user ? g.user.value : '', password }); } catch (e) {}
+    }
+    document.addEventListener('submit', (e) => offerSave(e.target), true);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target && e.target.matches && e.target.matches('input[type="password"]')) {
+        const g = groups.find((x) => x.pass === e.target); if (g) offerSave(g.form);
+      }
+    }, true);
+
+    // ---- Start + SPA-Beobachtung ----
+    let moTimer = null;
+    try {
+      const mo = new MutationObserver(() => { clearTimeout(moTimer); moTimer = setTimeout(refresh, 600); });
+      mo.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) {}
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(refresh, 400));
+    else setTimeout(refresh, 400);
+  })();
 
   // ------------------------------------------------------------------
   // Google/YouTube-Consent-Seite automatisch wegklicken (sonst hängt YouTube Music

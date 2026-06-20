@@ -1,7 +1,8 @@
 'use strict';
 const {
   app, BrowserWindow, ipcMain, session, Menu, clipboard, shell,
-  nativeTheme, protocol, nativeImage, net, dialog, webContents, components,
+  nativeTheme, protocol, nativeImage, net, dialog, webContents, components, powerSaveBlocker, desktopCapturer,
+  safeStorage, powerMonitor,
 } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -9,6 +10,7 @@ const fsp = require('node:fs/promises');
 const https = require('node:https');
 const http = require('node:http');
 const zlib = require('node:zlib');
+const crypto = require('node:crypto');
 const { Transform } = require('node:stream');
 const { pathToFileURL } = require('node:url');
 const { execFile, spawn } = require('node:child_process');
@@ -738,6 +740,109 @@ function matchShortcut(input) {
   return null;
 }
 
+// ECHTER Google-Login-Fix: User-Agent-Metadaten (UA + Sec-CH-UA + navigator.userAgentData) auf Chromium-
+// Engine-Ebene per CDP setzen → echtes Chrome ohne "Electron"-Marke, vor jedem Seiten-Script, ohne CSP.
+function applyUaOverride(wc) {
+  try {
+    if (!wc || wc.isDestroyed()) return;
+    if (!wc.debugger.isAttached()) wc.debugger.attach('1.3');
+    const M = String(process.versions.chrome).split('.')[0];
+    const F = String(process.versions.chrome);
+    wc.debugger.sendCommand('Emulation.setUserAgentOverride', {
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + F + ' Safari/537.36',
+      acceptLanguage: 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+      userAgentMetadata: {
+        brands: [{ brand: 'Not.A/Brand', version: '24' }, { brand: 'Chromium', version: M }, { brand: 'Google Chrome', version: M }],
+        fullVersionList: [{ brand: 'Not.A/Brand', version: '24.0.0.0' }, { brand: 'Chromium', version: F }, { brand: 'Google Chrome', version: F }],
+        platform: 'Windows', platformVersion: '15.0.0', architecture: 'x86', model: '', mobile: false, bitness: '64', wow64: false, fullVersion: F,
+      },
+    }).catch(() => {});
+  } catch {}
+}
+
+// ===== Google-Login über echtes Edge/Chrome → fertige Sitzung in NOVA importieren =====
+// Google blockt eingebetteten Chromium beim LOGIN. Wir loggen daher in einem echten installierten
+// Browser ein (den Google akzeptiert), lesen die Cookies per CDP aus und setzen sie in NOVAs Session.
+// Der blockierte Login-Schritt wird so komplett umgangen (eingeloggtes Surfen blockt Google nicht).
+let glChild = null;
+function findRealBrowser() {
+  const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+  const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const la = process.env['LOCALAPPDATA'] || '';
+  for (const p of [
+    pf + '\\Google\\Chrome\\Application\\chrome.exe',
+    pf86 + '\\Google\\Chrome\\Application\\chrome.exe',
+    la + '\\Google\\Chrome\\Application\\chrome.exe',
+    pf86 + '\\Microsoft\\Edge\\Application\\msedge.exe',
+    pf + '\\Microsoft\\Edge\\Application\\msedge.exe',
+  ]) { try { if (p && fs.existsSync(p)) return p; } catch {} }
+  return null;
+}
+function stopGl() { try { if (glChild) glChild.kill(); } catch {} glChild = null; }
+async function injectGoogleCookies(cookies) {
+  // In BEIDE relevanten Sessions setzen: Browsing (persist:nova) UND NOVA-Sound/YouTube Music (persist:nova-music)
+  const targets = [ses, session.fromPartition('persist:nova-music')].filter(Boolean);
+  for (const c of cookies || []) {
+    try {
+      const host = String(c.domain || '').replace(/^\./, '');
+      if (!host) continue;
+      const set = {
+        url: (c.secure ? 'https://' : 'http://') + host + (c.path || '/'),
+        name: c.name, value: c.value, path: c.path || '/', secure: !!c.secure, httpOnly: !!c.httpOnly,
+      };
+      if (String(c.domain || '').startsWith('.')) set.domain = c.domain;
+      if (c.expires && c.expires > 0) set.expirationDate = Math.floor(c.expires);
+      const ss = String(c.sameSite || '').toLowerCase();
+      set.sameSite = ss === 'none' ? 'no_restriction' : ss === 'lax' ? 'lax' : ss === 'strict' ? 'strict' : 'unspecified';
+      for (const t of targets) { try { await t.cookies.set(set); } catch {} }
+    } catch {}
+  }
+}
+async function googleLoginViaBrowser() {
+  if (glChild) { broadcast('google:login-status', { state: 'busy' }); return; }
+  const exe = findRealBrowser();
+  if (!exe) { broadcast('google:login-status', { state: 'error', msg: 'Kein Chrome/Edge gefunden' }); return; }
+  const port = 9333;
+  const profile = path.join(app.getPath('userData'), 'glogin');
+  try { fs.mkdirSync(profile, { recursive: true }); } catch {}
+  broadcast('google:login-status', { state: 'opening' });
+  try {
+    glChild = spawn(exe, ['--user-data-dir=' + profile, '--remote-debugging-port=' + port,
+      '--no-first-run', '--no-default-browser-check', '--new-window', 'https://accounts.google.com/'],
+      { detached: false, stdio: 'ignore' });
+  } catch (e) { glChild = null; broadcast('google:login-status', { state: 'error', msg: String(e && e.message || e) }); return; }
+  glChild.on('exit', () => { glChild = null; });
+  const start = Date.now();
+  let wsUrl = null;
+  for (let i = 0; i < 50 && !wsUrl && glChild; i++) {
+    await new Promise((r) => setTimeout(r, 300));
+    try { const j = await (await net.fetch('http://127.0.0.1:' + port + '/json/version')).json(); wsUrl = j.webSocketDebuggerUrl; } catch {}
+  }
+  if (!wsUrl) { stopGl(); broadcast('google:login-status', { state: 'error', msg: 'Debug-Verbindung fehlgeschlagen' }); return; }
+  let ws;
+  try { ws = new WebSocket(wsUrl); } catch (e) { stopGl(); broadcast('google:login-status', { state: 'error', msg: String(e && e.message || e) }); return; }
+  let id = 1; const pend = {};
+  const cdp = (method) => new Promise((res) => { const i = id++; pend[i] = res; try { ws.send(JSON.stringify({ id: i, method, params: {} })); } catch { res(null); } });
+  ws.addEventListener('message', (ev) => { try { const m = JSON.parse(ev.data); if (m.id && pend[m.id]) { pend[m.id](m.result); delete pend[m.id]; } } catch {} });
+  ws.addEventListener('open', () => { broadcast('google:login-status', { state: 'waiting' }); poll(); });
+  async function poll() {
+    if (!glChild) { try { ws.close(); } catch {} return; }
+    let cookies = [];
+    try { const r = await cdp('Storage.getCookies'); cookies = (r && r.cookies) || []; } catch {}
+    const loggedIn = cookies.some((c) => /^(SAPISID|__Secure-3PSID|__Secure-1PSID)$/.test(c.name) && /(^|\.)google\.com$/.test(c.domain || ''));
+    if (loggedIn) {
+      await injectGoogleCookies(cookies);
+      try { ws.close(); } catch {}
+      stopGl();
+      broadcast('google:login-status', { state: 'done' });
+      return;
+    }
+    if (Date.now() - start > 240000) { try { ws.close(); } catch {} stopGl(); broadcast('google:login-status', { state: 'timeout' }); return; }
+    setTimeout(poll, 2000);
+  }
+}
+ipcMain.handle('google:login', () => { googleLoginViaBrowser(); return { ok: true }; });
+
 // ---------------------------------------------------------------- web contents wiring
 app.on('web-contents-created', (_e, contents) => {
   // Electron hängt pro <webview> intern Listener an WebContents — bei vielen
@@ -749,11 +854,26 @@ app.on('web-contents-created', (_e, contents) => {
   if (netMonOn) contents.once('dom-ready', () => netAttach(contents));
 
   contents.setWindowOpenHandler(({ url, disposition }) => {
+    if (/^https:\/\/accounts\.google\.com\//i.test(url)) { googleLoginViaBrowser(); return { action: 'deny' }; }
     if (/^https?:|^about:blank/i.test(url)) {
       broadcast('tabs:open', { url, background: disposition === 'background-tab', openerId: contents.id });
     }
     return { action: 'deny' };
   });
+
+  // Google-Sign-in im Webview → echtes Login-Fenster + Sitzungs-Import (statt geblocktem Embed)
+  contents.on('will-navigate', (e, url) => {
+    if (/^https:\/\/accounts\.google\.com\//i.test(url)) { e.preventDefault(); googleLoginViaBrowser(); }
+  });
+
+  // UA-Metadaten via CDP setzen (echtes Chrome, vor jedem Script). Weicht DevTools/Netzwerk-Monitor aus:
+  // bei offenem DevTools geben wir den Debugger frei; nach Navigationen wird das Override neu gesetzt.
+  let devToolsOpen = false;
+  const reapplyUa = () => { if (!devToolsOpen) applyUaOverride(contents); };
+  reapplyUa();
+  contents.on('did-start-navigation', (_e, _url, _inPlace, isMain) => { if (isMain) reapplyUa(); });
+  contents.on('devtools-opened', () => { devToolsOpen = true; try { if (contents.debugger.isAttached()) contents.debugger.detach(); } catch {} });
+  contents.on('devtools-closed', () => { devToolsOpen = false; reapplyUa(); });
 
   contents.on('context-menu', (_ev, params) => buildPageContextMenu(contents, params));
 
@@ -894,6 +1014,7 @@ app.whenReady().then(async () => {
   }
 
   settings = new JsonStore(path.join(app.getPath('userData'), 'settings.json'), DEFAULT_SETTINGS);
+  shareInit();   // gespeicherten Share-Token/Benutzer laden
   bookmarks = new JsonStore(path.join(app.getPath('userData'), 'bookmarks.json'), { tree: [] });
   history = new JsonStore(path.join(app.getPath('userData'), 'history.json'), { items: [] });
   securityDb = new JsonStore(path.join(app.getPath('userData'), 'security-db.json'), {});   // host → Security-Report
@@ -923,6 +1044,32 @@ app.whenReady().then(async () => {
       // NOVA Studio (contained Windows-VM) als eigene Seite
       if (u.hostname === 'studio' && (p === '/' || p === '')) {
         return net.fetch(pathToFileURL(path.join(UI_DIR, 'studio.html')).toString());
+      }
+      // NOVA Studio: VM-Images über den Main-Prozess proxen → SAME-ORIGIN für das Webview (kein CORS),
+      // Range + Referer werden an copy.sh weitergereicht. Stabil, weil der Main-Prozess keine CORS-Limits hat.
+      if (u.hostname === 'studio' && p.indexOf('/__cdn__/') === 0) {
+        const target = 'https://i.copy.sh/' + p.slice(9) + (u.search || '');
+        let range = null; try { range = req.headers.get('Range'); } catch {}
+        return studioCdnFetch(target, range);   // Node-https → umgeht Chromiums Block (ERR_BLOCKED_BY_CLIENT)
+      }
+      // NOVA Studio: lokal heruntergeladenes VM-Image mit voller Range-Unterstützung ausliefern
+      // (Bytes direkt aus der Datei → robust, kein CDN/CORS/Streaming-Risiko mehr)
+      if (u.hostname === 'studio' && p.indexOf('/__local__/') === 0) {
+        const imgDir = path.join(studioDataDir, 'images');
+        const f = path.normalize(path.join(imgDir, p.slice(11)));
+        if (!f.startsWith(imgDir) || !fs.existsSync(f)) return new Response('not found', { status: 404 });
+        const size = fs.statSync(f).size;
+        let range = null; try { range = req.headers.get('Range'); } catch {}
+        const m = range && /bytes=(\d+)-(\d*)/.exec(range);
+        if (m) {
+          const start = parseInt(m[1], 10);
+          const end = m[2] ? Math.min(parseInt(m[2], 10), size - 1) : size - 1;
+          const len = Math.max(0, end - start + 1);
+          const buf = Buffer.alloc(len);
+          const fd = fs.openSync(f, 'r'); try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
+          return new Response(buf, { status: 206, headers: { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size, 'Accept-Ranges': 'bytes', 'Content-Length': String(len), 'Content-Type': 'application/octet-stream' } });
+        }
+        return new Response(fs.readFileSync(f), { headers: { 'Accept-Ranges': 'bytes', 'Content-Length': String(size), 'Content-Type': 'application/octet-stream' } });
       }
       // Heruntergeladene VM-Images aus dem Container-Verzeichnis (außerhalb von UI_DIR) ausliefern
       if (u.hostname === 'studio-data') {
@@ -999,6 +1146,32 @@ app.whenReady().then(async () => {
   }
   cleanClientHints(ses);
   cleanClientHints(musicSes);
+
+  // ---- NOVA Discord: eigene Session (bleibt eingeloggt, kein Adblock). Medien für Sprach-/Videoanrufe + Screen-Share. ----
+  const discordSes = session.fromPartition('persist:nova-discord');
+  discordSes.setUserAgent(chromeUA);
+  const discordPerms = ['media', 'audioCapture', 'videoCapture', 'notifications', 'fullscreen', 'clipboard-sanitized-write', 'clipboard-read', 'pointerLock', 'display-capture'];
+  discordSes.setPermissionRequestHandler((_wc, permission, cb) => { cb(discordPerms.includes(permission)); });
+  discordSes.setPermissionCheckHandler((_wc, permission) => discordPerms.includes(permission));
+  cleanClientHints(discordSes);
+  // Bildschirmfreigabe: Quellen sammeln → Auswahl im Renderer → zurück an Discord
+  let discordPickCb = null;
+  const discordSources = new Map();
+  discordSes.setDisplayMediaRequestHandler((_req, callback) => {
+    discordPickCb = callback; discordSources.clear();
+    desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true }).then((sources) => {
+      const list = sources.map((s) => { discordSources.set(s.id, s); return { id: s.id, name: s.name, thumb: (s.thumbnail && s.thumbnail.toDataURL()) || '', icon: (s.appIcon && s.appIcon.toDataURL && s.appIcon.toDataURL()) || '' }; });
+      broadcast('discord:screen-sources', list);
+    }).catch(() => { try { callback(); } catch {} discordPickCb = null; });
+  }, { useSystemPicker: false });
+  ipcMain.on('discord:screen-pick', (_e, payload) => {
+    if (!discordPickCb) return;
+    const id = payload && typeof payload === 'object' ? payload.id : payload;
+    const wantAudio = !(payload && typeof payload === 'object' && payload.audio === false);
+    const src = id && discordSources.get(id);
+    try { if (src) discordPickCb(wantAudio ? { video: src, audio: 'loopback' } : { video: src }); else discordPickCb(); } catch {}
+    discordPickCb = null; discordSources.clear();
+  });
 
   setupDownloads();
   createWindow();
@@ -1873,6 +2046,334 @@ ipcMain.handle('sec:save', (_e, rep) => {
 ipcMain.handle('sec:pull', () => secPull());
 ipcMain.handle('sec:contribute', () => secContribute());
 
+// ---- Shifter: hält den PC wach (OS-Ebene via powerSaveBlocker — kein Mausgewackel, unauffällig) ----
+let shifterId = null;
+const shifterActive = () => shifterId !== null && powerSaveBlocker.isStarted(shifterId);
+ipcMain.handle('shifter:toggle', () => {
+  try {
+    if (shifterActive()) { powerSaveBlocker.stop(shifterId); shifterId = null; return { active: false }; }
+    shifterId = powerSaveBlocker.start('prevent-display-sleep');   // verhindert Display-Schlaf + Auto-Sperre
+    return { active: true };
+  } catch { return { active: shifterActive() }; }
+});
+ipcMain.handle('shifter:status', () => ({ active: shifterActive() }));
+
+// ================================================================
+// NOVA Vault — integrierter Passwort-Manager
+// Zero-Knowledge: Master-Passwort → scrypt (speicherhart) → AES-256-GCM.
+// Der abgeleitete Schlüssel existiert NUR hier im Hauptprozess-RAM, niemals auf Platte,
+// niemals im Renderer. Optionale zweite Schicht: OS-Schlüsselspeicher (safeStorage/DPAPI).
+// ================================================================
+const VAULT_PATH = path.join(app.getPath('userData'), 'vault.dat');
+const VAULT_KDF = { N: 1 << 17, r: 8, p: 1, keyLen: 32, maxmem: 300 * 1024 * 1024 };  // scrypt N=131072 (~0,5–1 s, ~134 MB)
+const VAULT_AUTOLOCK_MS = 5 * 60 * 1000;   // 5 min Inaktivität → automatisch sperren
+let vaultKey = null;     // abgeleiteter 32-Byte-Schlüssel (Buffer) — NUR im RAM
+let vaultData = null;    // entschlüsselter Inhalt { entries: [...] } — nur wenn entsperrt
+let vaultSalt = null;    // scrypt-Salt der aktuellen Datei
+let vaultLockTimer = null;
+let vaultLockAt = 0;     // Zeitpunkt (ms) der nächsten Auto-Sperre — für den Live-Countdown in der UI
+let vaultClipTimer = null;
+let vaultFailCount = 0;  // Brute-Force-Backoff
+
+const vaultExists = () => { try { return fs.existsSync(VAULT_PATH); } catch { return false; } };
+const vaultUnlocked = () => !!vaultKey && !!vaultData;
+const vaultOsAvailable = () => { try { return !!(safeStorage && safeStorage.isEncryptionAvailable()); } catch { return false; } };
+
+function vaultWipeKey() {
+  try { if (Buffer.isBuffer(vaultKey)) vaultKey.fill(0); } catch {}
+  vaultKey = null; vaultData = null; vaultSalt = null;
+}
+function vaultLock() {
+  const was = vaultUnlocked();
+  vaultWipeKey();
+  if (vaultLockTimer) { clearTimeout(vaultLockTimer); vaultLockTimer = null; }
+  vaultLockAt = 0;
+  if (was) { try { broadcast('vault:locked', {}); } catch {} }
+}
+function vaultTouch() {   // Aktivität → Auto-Lock-Timer neu starten + Deadline an die UI melden
+  if (!vaultUnlocked()) return;
+  if (vaultLockTimer) clearTimeout(vaultLockTimer);
+  vaultLockTimer = setTimeout(() => vaultLock(), VAULT_AUTOLOCK_MS);
+  vaultLockAt = Date.now() + VAULT_AUTOLOCK_MS;
+  try { broadcast('vault:lock-at', { at: vaultLockAt }); } catch {}
+}
+function deriveKey(password, salt) {
+  return crypto.scryptSync(Buffer.from(String(password), 'utf8'), salt, VAULT_KDF.keyLen,
+    { N: VAULT_KDF.N, r: VAULT_KDF.r, p: VAULT_KDF.p, maxmem: VAULT_KDF.maxmem });
+}
+// Datei: innere Schicht AES-256-GCM (Master-Passwort), optional äußere Schicht safeStorage (OS-gebunden)
+function vaultEncryptBlob(obj, key, salt) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([cipher.update(Buffer.from(JSON.stringify(obj), 'utf8')), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  const inner = {
+    v: 1, kdf: 'scrypt', N: VAULT_KDF.N, r: VAULT_KDF.r, p: VAULT_KDF.p,
+    salt: salt.toString('base64'), iv: iv.toString('base64'), ct: ct.toString('base64'), tag: tag.toString('base64'),
+  };
+  let payload = Buffer.from(JSON.stringify(inner), 'utf8');
+  let os = false;
+  try { if (vaultOsAvailable()) { payload = safeStorage.encryptString(payload.toString('base64')); os = true; } } catch { os = false; }
+  return Buffer.from(JSON.stringify({ fmt: 2, os, data: payload.toString('base64') }), 'utf8');
+}
+function vaultReadInner() {
+  const file = JSON.parse(fs.readFileSync(VAULT_PATH, 'utf8'));
+  let innerBuf;
+  if (file.os) {
+    if (!vaultOsAvailable()) throw new Error('OS-Schlüssel nicht verfügbar (anderes Benutzerkonto/Gerät?)');
+    innerBuf = Buffer.from(safeStorage.decryptString(Buffer.from(file.data, 'base64')), 'base64');
+  } else { innerBuf = Buffer.from(file.data, 'base64'); }
+  return JSON.parse(innerBuf.toString('utf8'));
+}
+function vaultDecryptInner(inner, password) {
+  const salt = Buffer.from(inner.salt, 'base64');
+  const key = deriveKey(password, salt);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(inner.iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(inner.tag, 'base64'));
+  const pt = Buffer.concat([decipher.update(Buffer.from(inner.ct, 'base64')), decipher.final()]);  // wirft bei falschem PW (GCM-Tag)
+  return { key, obj: JSON.parse(pt.toString('utf8')), salt };
+}
+function vaultPersist() {
+  if (!vaultUnlocked() || !vaultSalt) throw new Error('locked');
+  const buf = vaultEncryptBlob(vaultData, vaultKey, vaultSalt);
+  const tmp = VAULT_PATH + '.tmp';
+  fs.writeFileSync(tmp, buf, { mode: 0o600 });
+  fs.renameSync(tmp, VAULT_PATH);
+}
+const vaultHost = (u) => { try { return new URL(/^https?:/i.test(u) ? u : 'https://' + u).hostname.replace(/^www\./, '').toLowerCase(); } catch { return String(u || '').toLowerCase().replace(/^www\./, ''); } };
+function vaultOriginMatch(entryUrl, origin) {
+  const eh = vaultHost(entryUrl), h = vaultHost(origin);
+  if (!eh || !h) return false;
+  return eh === h || h.endsWith('.' + eh) || eh.endsWith('.' + h);
+}
+function vaultGenerate(opts) {
+  const o = opts || {};
+  const len = Math.max(8, Math.min(128, o.length || 20));
+  const sets = [];
+  if (o.lower !== false) sets.push('abcdefghijkmnpqrstuvwxyz');     // ohne l
+  if (o.upper !== false) sets.push('ABCDEFGHJKLMNPQRSTUVWXYZ');     // ohne I, O
+  if (o.digits !== false) sets.push('23456789');                   // ohne 0,1
+  if (o.symbols) sets.push('!@#$%^&*()-_=+[]{};:,.?');
+  if (!sets.length) sets.push('abcdefghijkmnpqrstuvwxyz');
+  const all = sets.join(''), out = [];
+  for (const s of sets) out.push(s[crypto.randomInt(s.length)]);   // je ein Zeichen aus jedem Set
+  while (out.length < len) out.push(all[crypto.randomInt(all.length)]);
+  for (let i = out.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [out[i], out[j]] = [out[j], out[i]]; }
+  return out.join('');
+}
+
+ipcMain.handle('vault:status', () => ({ exists: vaultExists(), unlocked: vaultUnlocked(), osLayer: vaultOsAvailable() }));
+ipcMain.handle('vault:create', (_e, password) => {
+  try {
+    if (vaultExists()) return { ok: false, error: 'exists' };
+    if (!password || String(password).length < 8) return { ok: false, error: 'weak' };
+    vaultSalt = crypto.randomBytes(32);
+    vaultKey = deriveKey(password, vaultSalt);
+    vaultData = { entries: [] };
+    vaultPersist(); vaultTouch();
+    return { ok: true };
+  } catch (e) { vaultWipeKey(); return { ok: false, error: e.message }; }
+});
+ipcMain.handle('vault:unlock', async (_e, password) => {
+  try {
+    if (!vaultExists()) return { ok: false, error: 'none' };
+    if (vaultFailCount > 3) await new Promise((r) => setTimeout(r, Math.min(8000, (vaultFailCount - 3) * 1500)));  // Backoff
+    const inner = vaultReadInner();
+    let res;
+    try { res = vaultDecryptInner(inner, password); }
+    catch { vaultFailCount++; return { ok: false, error: 'wrong', fails: vaultFailCount }; }
+    vaultFailCount = 0;
+    vaultKey = res.key; vaultSalt = res.salt;
+    vaultData = res.obj && Array.isArray(res.obj.entries) ? res.obj : { entries: [] };
+    vaultTouch();
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('vault:lock', () => { vaultLock(); return { ok: true }; });
+ipcMain.handle('vault:keepalive', () => { if (!vaultUnlocked()) return { ok: false }; vaultTouch(); return { ok: true, at: vaultLockAt }; });
+ipcMain.handle('vault:list', () => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  vaultTouch();
+  return { ok: true, items: vaultData.entries.map((e) => ({ id: e.id, title: e.title, url: e.url, username: e.username, hasTotp: !!e.totp, updatedAt: e.updatedAt })) };
+});
+ipcMain.handle('vault:get', (_e, id) => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  vaultTouch();
+  const e = vaultData.entries.find((x) => x.id === id);
+  return e ? { ok: true, entry: e } : { ok: false, error: 'notfound' };
+});
+ipcMain.handle('vault:add', (_e, entry) => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  const now = Date.now(), en = entry || {};
+  const e = {
+    id: crypto.randomUUID(),
+    title: String(en.title || vaultHost(en.url) || 'Eintrag').slice(0, 200),
+    url: String(en.url || '').slice(0, 500), username: String(en.username || '').slice(0, 500),
+    password: String(en.password || ''), notes: String(en.notes || '').slice(0, 5000), totp: String(en.totp || '').slice(0, 200),
+    createdAt: now, updatedAt: now,
+  };
+  vaultData.entries.push(e); vaultPersist(); vaultTouch();
+  return { ok: true, id: e.id };
+});
+ipcMain.handle('vault:update', (_e, id, patch) => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  const e = vaultData.entries.find((x) => x.id === id);
+  if (!e) return { ok: false, error: 'notfound' };
+  for (const k of ['title', 'url', 'username', 'password', 'notes', 'totp']) if (patch && k in patch) e[k] = String(patch[k] || '');
+  e.updatedAt = Date.now(); vaultPersist(); vaultTouch();
+  return { ok: true };
+});
+ipcMain.handle('vault:delete', (_e, id) => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  const i = vaultData.entries.findIndex((x) => x.id === id);
+  if (i < 0) return { ok: false, error: 'notfound' };
+  vaultData.entries.splice(i, 1); vaultPersist(); vaultTouch();
+  return { ok: true };
+});
+ipcMain.handle('vault:match', (_e, origin) => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  vaultTouch();
+  return { ok: true, items: vaultData.entries.filter((e) => vaultOriginMatch(e.url, origin)).map((e) => ({ id: e.id, title: e.title, username: e.username })) };
+});
+// Passwort NUR zum Ausfüllen herausgeben — und NUR wenn die Origin zum Eintrag passt (Anti-Phishing)
+ipcMain.handle('vault:fill', (_e, id, origin) => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  vaultTouch();
+  const e = vaultData.entries.find((x) => x.id === id);
+  if (!e) return { ok: false, error: 'notfound' };
+  if (e.url && origin && !vaultOriginMatch(e.url, origin)) return { ok: false, error: 'origin' };
+  return { ok: true, username: e.username, password: e.password };
+});
+ipcMain.handle('vault:generate', (_e, opts) => ({ ok: true, password: vaultGenerate(opts) }));
+ipcMain.handle('vault:changeMaster', (_e, oldPw, newPw) => {
+  try {
+    if (!vaultUnlocked()) return { ok: false, locked: true };
+    if (!newPw || String(newPw).length < 8) return { ok: false, error: 'weak' };
+    try { vaultDecryptInner(vaultReadInner(), oldPw); } catch { return { ok: false, error: 'wrong' }; }
+    const salt = crypto.randomBytes(32), newKey = deriveKey(newPw, salt);
+    try { if (Buffer.isBuffer(vaultKey)) vaultKey.fill(0); } catch {}
+    vaultKey = newKey; vaultSalt = salt;
+    vaultPersist(); vaultTouch();
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('vault:copy', (_e, id, field) => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  vaultTouch();
+  const e = vaultData.entries.find((x) => x.id === id);
+  if (!e) return { ok: false, error: 'notfound' };
+  const val = String((field === 'username' ? e.username : e.password) || '');
+  clipboard.writeText(val);
+  if (vaultClipTimer) clearTimeout(vaultClipTimer);
+  vaultClipTimer = setTimeout(() => { try { if (clipboard.readText() === val) clipboard.clear(); } catch {} }, 20000);  // Auto-Löschung nach 20 s
+  return { ok: true, clearMs: 20000 };
+});
+app.on('before-quit', () => { try { vaultLock(); } catch {} });
+app.whenReady().then(() => {   // OS-Sperre/Standby → Vault sofort sperren
+  try { powerMonitor.on('lock-screen', () => vaultLock()); powerMonitor.on('suspend', () => vaultLock()); } catch {}
+});
+
+// ================================================================
+// NOVA Share — Client zum eigenen Datei-Share-Server.
+// Token + Server-URL liegen im Hauptprozess; alle Requests laufen über Node
+// (kein CORS-Problem, Bearer-Token nie im Renderer-DOM).
+// ================================================================
+let shareToken = null, shareUser = null;
+const shareBase = () => String((settings && settings.get('shareServerUrl', '')) || '').replace(/\/+$/, '');
+function shareInit() { try { shareToken = settings.get('shareToken', null) || null; shareUser = settings.get('shareUser', null) || null; } catch {} }
+function shareApi(method, apiPath, { body } = {}) {
+  return new Promise((resolve) => {
+    const base = shareBase(); if (!base) return resolve({ ok: false, error: 'no_server' });
+    let u; try { u = new URL(base + apiPath); } catch { return resolve({ ok: false, error: 'bad_url' }); }
+    const lib = u.protocol === 'https:' ? https : http;
+    const data = body != null ? Buffer.from(JSON.stringify(body)) : null;
+    const headers = { 'Accept': 'application/json' };
+    if (data) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = data.length; }
+    if (shareToken) headers['Authorization'] = 'Bearer ' + shareToken;
+    const req = lib.request({ method, hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers, timeout: 25000 }, (resp) => {
+      const ch = []; resp.on('data', (c) => ch.push(c));
+      resp.on('end', () => { let j = {}; try { j = JSON.parse(Buffer.concat(ch).toString('utf8') || '{}'); } catch {} resolve({ ok: resp.statusCode >= 200 && resp.statusCode < 300, status: resp.statusCode, data: j }); });
+    });
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve({ ok: false, error: 'timeout' }); });
+    req.on('error', (e) => resolve({ ok: false, error: 'network', detail: e.message }));
+    if (data) req.write(data);
+    req.end();
+  });
+}
+function shareUniquePath(dir, name) {
+  let p = path.join(dir, name); if (!fs.existsSync(p)) return p;
+  const ext = path.extname(name), b = path.basename(name, ext);
+  for (let i = 1; i < 9999; i++) { p = path.join(dir, `${b} (${i})${ext}`); if (!fs.existsSync(p)) return p; }
+  return path.join(dir, `${b}-${Date.now()}${ext}`);
+}
+const shareErr = (r) => (r && r.data && r.data.error) || (r && r.error) || 'fehler';
+
+ipcMain.handle('share:config', () => ({ serverUrl: shareBase(), loggedIn: !!shareToken, user: shareUser }));
+ipcMain.handle('share:setServer', (_e, url) => { try { settings.set('shareServerUrl', String(url || '').trim()); } catch {} return { ok: true, serverUrl: shareBase() }; });
+ipcMain.handle('share:ping', async () => { const r = await shareApi('GET', '/api/ping'); return { ok: r.ok, error: r.ok ? null : shareErr(r) }; });
+ipcMain.handle('share:login', async (_e, creds) => {
+  const r = await shareApi('POST', '/api/login', { body: { username: (creds && creds.username) || '', password: (creds && creds.password) || '' } });
+  if (r.ok && r.data && r.data.token) { shareToken = r.data.token; shareUser = r.data.user; try { settings.set('shareToken', shareToken); settings.set('shareUser', shareUser); } catch {} return { ok: true, user: shareUser }; }
+  return { ok: false, error: shareErr(r), status: r.status };
+});
+ipcMain.handle('share:logout', () => { shareToken = null; shareUser = null; try { settings.set('shareToken', null); settings.set('shareUser', null); } catch {} return { ok: true }; });
+ipcMain.handle('share:me', async () => { const r = await shareApi('GET', '/api/me'); if (r.ok) { shareUser = r.data.user; try { settings.set('shareUser', shareUser); } catch {} return { ok: true, user: shareUser }; } if (r.status === 401) { shareToken = null; } return { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:files', async () => { const r = await shareApi('GET', '/api/files'); return r.ok ? { ok: true, files: r.data.files, me: r.data.me } : { ok: false, status: r.status, error: shareErr(r) }; });
+ipcMain.handle('share:delete', async (_e, id) => { const r = await shareApi('DELETE', '/api/files/' + encodeURIComponent(id)); return r.ok ? { ok: true } : { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:changePassword', async (_e, b) => { const r = await shareApi('POST', '/api/changePassword', { body: b }); return r.ok ? { ok: true } : { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:adminUsers', async () => { const r = await shareApi('GET', '/api/admin/users'); return r.ok ? { ok: true, users: r.data.users } : { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:adminStats', async () => { const r = await shareApi('GET', '/api/admin/stats'); return r.ok ? { ok: true, stats: r.data } : { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:adminCreate', async (_e, b) => { const r = await shareApi('POST', '/api/admin/users', { body: b }); return r.ok ? { ok: true, user: r.data.user } : { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:adminUpdate', async (_e, id, b) => { const r = await shareApi('PATCH', '/api/admin/users/' + encodeURIComponent(id), { body: b }); return r.ok ? { ok: true, user: r.data.user } : { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:adminDelete', async (_e, id) => { const r = await shareApi('DELETE', '/api/admin/users/' + encodeURIComponent(id)); return r.ok ? { ok: true } : { ok: false, error: shareErr(r) }; });
+ipcMain.handle('share:upload', async () => {
+  if (!shareToken) return { ok: false, error: 'not_logged_in' };
+  if (!shareBase()) return { ok: false, error: 'no_server' };
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const pick = await dialog.showOpenDialog(win, { title: 'Dateien hochladen', properties: ['openFile', 'multiSelections'] });
+  if (pick.canceled || !pick.filePaths.length) return { ok: false, canceled: true };
+  const results = [];
+  for (const fp of pick.filePaths) results.push(await shareUploadOne(fp));
+  return { ok: results.some((r) => r.ok), results };
+});
+function shareUploadOne(filePath) {
+  return new Promise((resolve) => {
+    let st; try { st = fs.statSync(filePath); } catch { return resolve({ ok: false, name: path.basename(filePath), error: 'nofile' }); }
+    let u; try { u = new URL(shareBase() + '/api/upload'); } catch { return resolve({ ok: false, error: 'bad_url' }); }
+    const lib = u.protocol === 'https:' ? https : http;
+    const name = path.basename(filePath);
+    const headers = { 'Content-Type': 'application/octet-stream', 'Content-Length': st.size, 'X-Filename': Buffer.from(name, 'utf8').toString('base64'), 'Authorization': 'Bearer ' + shareToken };
+    const req = lib.request({ method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname, headers }, (resp) => {
+      const ch = []; resp.on('data', (c) => ch.push(c));
+      resp.on('end', () => { let j = {}; try { j = JSON.parse(Buffer.concat(ch).toString('utf8') || '{}'); } catch {} broadcast('share:progress', { name, done: true, ok: resp.statusCode < 300 }); resolve({ ok: resp.statusCode < 300, name, status: resp.statusCode, error: j.error, file: j.file }); });
+    });
+    req.on('error', (e) => { broadcast('share:progress', { name, done: true, ok: false }); resolve({ ok: false, name, error: 'network', detail: e.message }); });
+    const rs = fs.createReadStream(filePath);
+    let sent = 0; rs.on('data', (c) => { sent += c.length; broadcast('share:progress', { name, sent, total: st.size, up: true }); });
+    rs.on('error', () => { try { req.destroy(); } catch {} resolve({ ok: false, name, error: 'read' }); });
+    rs.pipe(req);
+  });
+}
+ipcMain.handle('share:download', async (_e, id, name) => {
+  if (!shareToken) return { ok: false, error: 'not_logged_in' };
+  let u; try { u = new URL(shareBase() + '/api/download/' + encodeURIComponent(id)); } catch { return { ok: false, error: 'bad_url' }; }
+  const lib = u.protocol === 'https:' ? https : http;
+  const dest = shareUniquePath(app.getPath('downloads'), String(name || 'datei').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_'));
+  return await new Promise((resolve) => {
+    const req = lib.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname, headers: { 'Authorization': 'Bearer ' + shareToken } }, (resp) => {
+      if (resp.statusCode >= 300) { resp.resume(); return resolve({ ok: false, status: resp.statusCode }); }
+      const ws = fs.createWriteStream(dest); const total = Number(resp.headers['content-length'] || 0); let got = 0;
+      resp.on('data', (c) => { got += c.length; broadcast('share:progress', { name, sent: got, total, down: true }); });
+      resp.pipe(ws);
+      ws.on('finish', () => { broadcast('share:progress', { name, done: true, ok: true, down: true }); resolve({ ok: true, path: dest }); });
+      ws.on('error', () => resolve({ ok: false, error: 'write' }));
+    });
+    req.on('error', (e) => resolve({ ok: false, error: 'network', detail: e.message }));
+    req.end();
+  });
+});
+ipcMain.handle('share:openDownloads', () => { try { shell.openPath(app.getPath('downloads')); } catch {} return { ok: true }; });
+
 // Session
 ipcMain.on('session:save', (_e, tabs) => settings.set('lastSession', tabs));
 
@@ -1884,6 +2385,63 @@ const STUDIO_DIR = path.join(app.getPath('userData'), 'studio');
 const STUDIO_IMG_DIR = path.join(STUDIO_DIR, 'images');
 const studioMkdir = (d) => { try { fs.mkdirSync(d, { recursive: true }); } catch {} };
 const studioSafeId = (id) => String(id || '').replace(/[^a-z0-9\-]/gi, '');
+
+// VM-Daten via Node-https holen (Chromium-Netzwerk-Stack umgehen → kein ERR_BLOCKED_BY_CLIENT).
+// Gepuffert; nur für kleine/mittlere Antworten (9p-Dateien, State). Folgt Redirects.
+function studioCdnFetch(target, range, redirects, attempt) {
+  redirects = redirects || 0; attempt = attempt || 0;
+  return new Promise((resolve) => {
+    let https; try { https = require('https'); } catch { resolve(new Response('no https', { status: 500 })); return; }
+    const headers = { 'Referer': 'https://copy.sh/v86/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' };
+    if (range) headers['Range'] = range;
+    let settled = false;
+    const retry = () => { if (settled) return; settled = true; if (attempt < 4) setTimeout(() => resolve(studioCdnFetch(target, range, redirects, attempt + 1)), 250 + attempt * 300); else resolve(new Response('cdn error', { status: 502 })); };
+    let r;
+    try { r = https.get(target, { headers }, onRes); } catch { retry(); return; }
+    function onRes(res) {
+      const sc = res.statusCode || 0;
+      if (sc >= 300 && sc < 400 && res.headers.location && redirects < 5) {
+        res.resume(); if (settled) return; settled = true;
+        resolve(studioCdnFetch(new URL(res.headers.location, target).toString(), range, redirects + 1, attempt));
+        return;
+      }
+      if (sc >= 500) { res.resume(); retry(); return; }   // Serverfehler → erneut versuchen
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        if (settled) return; settled = true;
+        const body = Buffer.concat(chunks);
+        const h = { 'Accept-Ranges': 'bytes', 'Content-Length': String(body.length) };
+        if (res.headers['content-range']) h['Content-Range'] = res.headers['content-range'];
+        h['Content-Type'] = res.headers['content-type'] || 'application/octet-stream';
+        resolve(new Response(body, { status: sc || 200, headers: h }));
+      });
+      res.on('error', retry);
+    }
+    r.on('error', retry);
+    r.setTimeout(20000, () => { try { r.destroy(); } catch {} retry(); });   // hängende Chunk-Anfrage → erneut
+  });
+}
+
+// Ganze Datei via Node-https in einen Buffer laden (für den State-Download). Folgt Redirects, mit Fortschritt.
+function studioDownloadBuffer(target, onProgress, redirects) {
+  redirects = redirects || 0;
+  return new Promise((resolve, reject) => {
+    const https = require('https');
+    const r = https.get(target, { headers: { 'Referer': 'https://copy.sh/v86/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }, (res) => {
+      const sc = res.statusCode || 0;
+      if (sc >= 300 && sc < 400 && res.headers.location && redirects < 5) { res.resume(); resolve(studioDownloadBuffer(new URL(res.headers.location, target).toString(), onProgress, redirects + 1)); return; }
+      if (sc !== 200) { reject(new Error('HTTP ' + sc)); return; }
+      const total = parseInt(res.headers['content-length'] || '0', 10);
+      const parts = []; let got = 0;
+      res.on('data', (c) => { parts.push(c); got += c.length; if (total && onProgress) onProgress(Math.round((got / total) * 100), 'Lade ReactOS-Abbild … ' + (got / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MB'); });
+      res.on('end', () => resolve(Buffer.concat(parts)));
+      res.on('error', reject);
+    });
+    r.on('error', reject);
+    r.setTimeout(120000, () => { try { r.destroy(new Error('Timeout')); } catch {} });
+  });
+}
 
 ipcMain.handle('studio:list', (e) => {
   if (!fromNova(e)) return [];
@@ -1940,42 +2498,67 @@ ipcMain.handle('studio:delete', (e, id) => {
 ipcMain.handle('studio:image', (e, os) => {
   if (!fromNova(e)) return { ready: false };
   try {
-    if (os === 'reactos') {
-      const f = path.join(STUDIO_IMG_DIR, 'reactos.img');
-      if (fs.existsSync(f)) return { ready: true, url: 'nova://studio-data/images/reactos.img', size: fs.statSync(f).size };
+    if (os === 'windows') {
+      const f = path.join(STUDIO_IMG_DIR, 'reactos-v3.img');
+      if (fs.existsSync(f) && fs.statSync(f).size > 600000000) return { ready: true, url: 'nova://studio/__local__/reactos-v3.img', size: fs.statSync(f).size };
       return { ready: false };
     }
-    return { ready: true };   // Linux ist gebündelt
+    return { ready: true };   // Linux streamt über den Proxy
   } catch { return { ready: false }; }
 });
 
 ipcMain.handle('studio:download', async (e, os) => {
   if (!fromNova(e)) return { ok: false };
-  if (os !== 'reactos') return { ok: true };
-  const url = settings.get('studioReactosUrl', '');
-  if (!url) return { ok: false, error: 'Kein ReactOS-Image hinterlegt. In den NOVA-Einstellungen eine Image-URL setzen (studioReactosUrl).' };
+  if (os !== 'windows') return { ok: true };
+  const url = settings.get('studioReactosUrl', '') || 'https://i.copy.sh/reactos-v3/.img';
   try {
     studioMkdir(STUDIO_IMG_DIR);
-    const dest = path.join(STUDIO_IMG_DIR, 'reactos.img');
+    const dest = path.join(STUDIO_IMG_DIR, 'reactos-v3.img');
+    if (fs.existsSync(dest) && fs.statSync(dest).size > 600000000) return { ok: true, url: 'nova://studio/__local__/reactos-v3.img', size: fs.statSync(dest).size };
     const tmp = dest + '.part';
     await new Promise((resolve, reject) => {
-      const req = net.request(url);
-      req.on('response', (res) => {
-        if (res.statusCode >= 400) { reject(new Error('HTTP ' + res.statusCode)); return; }
-        const total = parseInt(res.headers['content-length'] || '0', 10);
-        let got = 0;
-        const out = fs.createWriteStream(tmp);
-        res.on('data', (chunk) => {
-          got += chunk.length; out.write(chunk);
-          if (total && !e.sender.isDestroyed()) e.sender.send('studio:progress', { pct: Math.round((got / total) * 100), status: 'Lade ReactOS … ' + (got / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MB' });
+      const https = require('https');
+      const out = fs.createWriteStream(tmp);
+      const get = (u2, redirects) => {
+        const r = https.get(u2, { headers: { 'Referer': 'https://copy.sh/v86/', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }, (res) => {
+          const sc = res.statusCode || 0;
+          if (sc >= 300 && sc < 400 && res.headers.location && redirects < 5) { res.resume(); get(new URL(res.headers.location, u2).toString(), redirects + 1); return; }
+          if (sc !== 200) { reject(new Error('HTTP ' + sc)); return; }
+          const total = parseInt(res.headers['content-length'] || '0', 10);
+          let got = 0;
+          res.on('data', (chunk) => { got += chunk.length; if (total && !e.sender.isDestroyed()) e.sender.send('studio:progress', { pct: Math.round((got / total) * 100), status: 'Lade ReactOS … ' + (got / 1048576).toFixed(0) + ' / ' + (total / 1048576).toFixed(0) + ' MB' }); });
+          res.pipe(out);
+          out.on('finish', () => out.close(() => { try { fs.renameSync(tmp, dest); resolve(); } catch (err) { reject(err); } }));
+          res.on('error', reject);
         });
-        res.on('end', () => out.end(() => { try { fs.renameSync(tmp, dest); resolve(); } catch (err) { reject(err); } }));
-        res.on('error', reject);
-      });
-      req.on('error', reject);
-      req.end();
+        r.on('error', reject);
+        r.setTimeout(45000, () => { try { r.destroy(new Error('Timeout')); } catch {} });
+      };
+      get(url, 0);
     });
-    return { ok: true, url: 'nova://studio-data/images/reactos.img', size: fs.statSync(dest).size };
+    return { ok: true, url: 'nova://studio/__local__/reactos-v3.img', size: fs.statSync(dest).size };
+  } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+});
+
+// ReactOS-State (.zst) im Main-Prozess entpacken — v86 entpackt initial_state NICHT selbst (restore_state
+// erwartet rohe Daten). Wir laden den State, dekomprimieren mit Node-zstd und legen ihn roh lokal ab.
+ipcMain.handle('studio:state', async (e, os) => {
+  if (!fromNova(e)) return { ok: false };
+  if (os !== 'windows') return { ok: false };
+  try {
+    const zlib = require('zlib');
+    if (typeof zlib.zstdDecompressSync !== 'function') return { ok: false, error: 'zstd nicht verfügbar (Node zu alt)' };
+    studioMkdir(STUDIO_IMG_DIR);
+    const dest = path.join(STUDIO_IMG_DIR, 'reactos-state.bin');
+    if (fs.existsSync(dest) && fs.statSync(dest).size > 1000000) return { ok: true, url: 'nova://studio/__local__/reactos-state.bin' };
+    const send = (pct, status) => { try { if (!e.sender.isDestroyed()) e.sender.send('studio:progress', { pct, status }); } catch {} };
+    const url = settings.get('studioReactosState', '') || 'https://i.copy.sh/reactos_state-v3.bin.zst';
+    const zst = await studioDownloadBuffer(url, send);
+    send(100, 'State wird entpackt …');
+    const raw = zlib.zstdDecompressSync(zst, { maxOutputLength: 1024 * 1024 * 1024 });
+    fs.writeFileSync(dest + '.part', raw);
+    fs.renameSync(dest + '.part', dest);
+    return { ok: true, url: 'nova://studio/__local__/reactos-state.bin' };
   } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
 });
 

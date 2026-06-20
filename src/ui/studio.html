@@ -71,8 +71,29 @@
 
   .stage{flex:1;min-width:0;position:relative;display:flex;align-items:center;justify-content:center;background:#000}
   #screen{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  #screen.run{cursor:pointer}
   #screen > div{color:#cfe;background:#000;white-space:pre;font:14px/14px 'Consolas','DejaVu Sans Mono',monospace}
-  #screen canvas{max-width:100%;max-height:100%;image-rendering:pixelated;background:#000}
+  #screen canvas{background:#000;image-rendering:auto}
+  /* Anzeige passt sich dem verfügbaren Platz an (Einpassen=Seitenverhältnis, Strecken=füllen, Original=1:1) */
+  #screen.fit canvas{width:100%!important;height:100%!important;object-fit:contain!important}
+  #screen.stretch canvas{width:100%!important;height:100%!important;object-fit:fill!important}
+  #screen.actual canvas{width:auto!important;height:auto!important;max-width:100%;max-height:100%;object-fit:none!important}
+  #screen.sharp canvas{image-rendering:pixelated}
+  /* Settings-Menü */
+  .menu{position:absolute;top:46px;right:10px;z-index:45;width:248px;border-radius:14px;padding:8px;
+    background:rgba(14,14,24,.96);border:1px solid var(--bd);box-shadow:0 18px 50px rgba(0,0,0,.55);
+    backdrop-filter:blur(20px);display:none;animation:fadein .16s var(--ease)}
+  .menu.show{display:block}
+  .menu .mh{font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--txt3);padding:9px 8px 5px}
+  .seg{display:flex;gap:4px;padding:0 4px 6px}
+  .seg button{flex:1;height:30px;border-radius:8px;background:var(--surf);border:1px solid var(--bd);color:var(--txt2);
+    font-size:11px;font-weight:600;cursor:pointer;transition:all .12s var(--ease)}
+  .seg button:hover{background:var(--surf2);color:var(--txt)}
+  .seg button.on{background:var(--grad);color:#fff;border-color:transparent}
+  .menu .mrow{display:flex;align-items:center;gap:8px;width:100%;padding:9px 9px;border-radius:9px;background:none;border:none;
+    color:var(--txt);font-size:12.5px;font-weight:600;cursor:pointer;text-align:left}
+  .menu .mrow:hover{background:var(--surf2)}
+  .menu .mrow svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;flex:none}
 
   .welcome{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     text-align:center;gap:16px;padding:30px;background:radial-gradient(120% 100% at 50% 40%,#0a0a16,#05050c)}
@@ -142,6 +163,8 @@
       <button class="btn icon" id="t-restart" disabled title="VM neu starten"><svg viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
       <button class="btn icon danger" id="t-stop" disabled title="VM ausschalten"><svg viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/></svg></button>
       <span class="sep"></span>
+      <button class="btn icon" id="t-cfg" title="Anzeige &amp; Eingabe"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H8a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V8a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+      <span class="sep"></span>
       <button class="btn icon" id="t-split" title="Split / Vollansicht"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg></button>
       <button class="btn icon" id="t-close" title="NOVA Studio schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
@@ -154,7 +177,24 @@
     </aside>
 
     <div class="stage">
-      <div id="screen"><div></div><canvas style="display:none"></canvas></div>
+      <div id="screen" class="fit"><div></div><canvas style="display:none"></canvas></div>
+
+      <div class="menu" id="cfg-menu">
+        <div class="mh">Anzeige</div>
+        <div class="seg" id="seg-fit">
+          <button data-fit="fit" class="on">Einpassen</button>
+          <button data-fit="actual">Original</button>
+          <button data-fit="stretch">Strecken</button>
+        </div>
+        <div class="mh">Bildschärfe</div>
+        <div class="seg" id="seg-sharp">
+          <button data-sharp="0" class="on">Weich</button>
+          <button data-sharp="1">Scharf (Pixel)</button>
+        </div>
+        <div class="mh">Eingabe</div>
+        <button class="mrow" id="m-cad"><svg viewBox="0 0 24 24"><path d="M3 5h18M3 12h18M3 19h18"/></svg>Strg + Alt + Entf senden</button>
+        <button class="mrow" id="m-grab"><svg viewBox="0 0 24 24"><path d="M9 11V6a2 2 0 0 1 4 0v5M5 11V9a2 2 0 0 1 4 0M13 11V7a2 2 0 0 1 4 0v6a7 7 0 0 1-7 7 7 7 0 0 1-6-3l-2-3 1.5-1.2a2 2 0 0 1 2.5.2L9 14"/></svg>Maus übernehmen (Klick = aktiv, ESC = frei)</button>
+      </div>
 
       <div class="welcome" id="welcome">
         <div class="orb"></div>
@@ -181,17 +221,17 @@
     <h2>Neue VM erstellen</h2>
     <div class="sub">Beide Systeme starten mit <b>grafischem Desktop</b>, vollständig isoliert im Sandkasten — als Container gespeichert und jederzeit restlos löschbar.</div>
     <div class="os-grid">
-      <div class="os-opt sel" data-os="linux">
-        <div class="ic"><svg viewBox="0 0 24 24"><path fill="#fff" d="M12 2.2c-2.5 0-4.1 1.9-4.1 4.6 0 1.2-.3 1.9-1 2.8C5.4 11.4 4 13 4 15.7c0 1.1.5 1.9 1.4 2.2.2 1.4 2.6 2.6 6.6 2.6s6.4-1.2 6.6-2.6c.9-.3 1.4-1.1 1.4-2.2 0-2.7-1.4-4.3-2.9-6.1-.7-.9-1-1.6-1-2.8 0-2.7-1.6-4.6-4.1-4.6z"/><circle cx="10.2" cy="7.3" r="1.15" fill="#0a0a12"/><circle cx="13.8" cy="7.3" r="1.15" fill="#0a0a12"/><circle cx="10.55" cy="7.05" r=".38" fill="#fff"/><circle cx="14.15" cy="7.05" r=".38" fill="#fff"/><path fill="#fbbf24" d="M12 7.7l1.55 1.05c0 .65-.7 1.15-1.55 1.15s-1.55-.5-1.55-1.15z"/><path fill="#fbbf24" d="M8.9 18.3c-.6.6-1.7 1.4-2.2 1-.5-.4.2-1.5.8-2.1zM15.1 18.3c.6.6 1.7 1.4 2.2 1 .5-.4-.2-1.5-.8-2.1z"/></svg></div>
-        <div class="t">Linux (Arch)</div>
-        <div class="d">Vollwertiger grafischer Linux-Desktop. Bootet direkt in die Oberfläche.</div>
-        <span class="tag">grafisch · sofort</span>
+      <div class="os-opt sel" data-os="serenity">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8.5h18"/><circle cx="6" cy="6.2" r=".5" fill="#fff" stroke="none"/><circle cx="8" cy="6.2" r=".5" fill="#fff" stroke="none"/></svg></div>
+        <div class="t">SerenityOS</div>
+        <div class="d">Schicker <b>grafischer Desktop</b> (Fenster, Taskleiste, Apps). Bootet direkt — stabil.</div>
+        <span class="tag">grafisch · stabil</span>
       </div>
-      <div class="os-opt" data-os="windows">
-        <div class="ic"><svg viewBox="0 0 24 24" fill="#fff"><path d="M3 5.4l7.2-1v6.9H3zM11 4.25L21 3v8.3H11zM3 12.7h7.2v6.9l-7.2-1zM11 12.7h10V21l-10-1.4z"/></svg></div>
-        <div class="t">Windows (ReactOS)</div>
-        <div class="d">Open-Source-Windows mit grafischem Desktop. Bootet direkt zum Schreibtisch.</div>
-        <span class="tag">grafisch · sofort</span>
+      <div class="os-opt" data-os="linux">
+        <div class="ic"><svg viewBox="0 0 24 24"><path fill="#fff" d="M12 2.2c-2.5 0-4.1 1.9-4.1 4.6 0 1.2-.3 1.9-1 2.8C5.4 11.4 4 13 4 15.7c0 1.1.5 1.9 1.4 2.2.2 1.4 2.6 2.6 6.6 2.6s6.4-1.2 6.6-2.6c.9-.3 1.4-1.1 1.4-2.2 0-2.7-1.4-4.3-2.9-6.1-.7-.9-1-1.6-1-2.8 0-2.7-1.6-4.6-4.1-4.6z"/><circle cx="10.2" cy="7.3" r="1.15" fill="#0a0a12"/><circle cx="13.8" cy="7.3" r="1.15" fill="#0a0a12"/><circle cx="10.55" cy="7.05" r=".38" fill="#fff"/><circle cx="14.15" cy="7.05" r=".38" fill="#fff"/><path fill="#fbbf24" d="M12 7.7l1.55 1.05c0 .65-.7 1.15-1.55 1.15s-1.55-.5-1.55-1.15z"/><path fill="#fbbf24" d="M8.9 18.3c-.6.6-1.7 1.4-2.2 1-.5-.4.2-1.5.8-2.1zM15.1 18.3c.6.6 1.7 1.4 2.2 1 .5-.4-.2-1.5-.8-2.1z"/></svg></div>
+        <div class="t">Arch Linux</div>
+        <div class="d">Schlankes Linux in der <b>Konsole</b> (mit <code>startx</code> für eine einfache X-Oberfläche).</div>
+        <span class="tag">Konsole</span>
       </div>
     </div>
     <div class="field">
@@ -216,18 +256,23 @@
   const ACC = { cyan:['#00e5ff','#7c4dff'], violet:['#a78bfa','#ec4899'], magenta:['#f471b5','#7c3aed'],
                 lime:['#a3e635','#22d3ee'], amber:['#fbbf24','#fb7185'], ice:['#7dd3fc','#818cf8'] };
 
-  // Vorkonfigurierte, GRAFISCHE Profile (Instant-Boot per State, von copy.shs öffentlichem CDN gestreamt)
-  const CDN = 'https://i.copy.sh/';
+  // Vorkonfigurierte, GRAFISCHE Profile. Images laufen über den Main-Proxy (nova://studio/__cdn__/…)
+  // → same-origin (kein CORS), Main holt sie von copy.sh mit Range+Referer. Stabil.
+  const CDN = 'nova://studio/__cdn__/';
   const PROFILES = {
+    // Beide booten KALT (kein .zst-State → kein hängendes Decompress/Restore). copy.shs *-boot-Profile exakt.
+    // Arch: Kernel wird aus dem 9p-Dateisystem geladen (bzimage_initrd_from_filesystem) + cmdline.
     linux:   { label:'Arch Linux', mem:512, vga:8,
                filesystem:{ baseurl: CDN+'arch/', basefs:{ url: CDN+'fs.json' } },
-               state: CDN+'arch_state-v3.bin.zst' },
-    windows: { label:'ReactOS', mem:512, vga:8,
-               hda:{ url: CDN+'reactos-v3/.img', async:true, size:734003200 },
-               state: CDN+'reactos_state-v3.bin.zst' },
+               bzimage_initrd_from_filesystem:true,
+               cmdline:"rw apm=off vga=0x344 video=vesafb:ypan,vremap:8 root=host9p rootfstype=9p rootflags=trans=virtio,cache=loose mitigations=off audit=0 init_on_free=on tsc=reliable random.trust_cpu=on nowatchdog init=/usr/bin/init-openrc net.ifnames=0 biosdevname=0" },
+    // SerenityOS: grafischer Desktop, bootet DIREKT von der (zstd-)Platte — KEIN State (kein Restore-Hänger).
+    // v86 entpackt die .img.zst-Chunks selbst pro Block; use_parts lädt die Chunk-Dateien über den Proxy.
+    serenity: { label:'SerenityOS', mem:512, vga:16,
+                hda:{ url: CDN+'serenity-v3/.img.zst', async:true, size:734003200, fixed_chunk_size:1048576, use_parts:true } },
   };
 
-  let emulator = null, current = null, running = false, paused = false, booting = false, selOs = 'linux';
+  let emulator = null, current = null, running = false, paused = false, booting = false, selOs = 'linux', bootWatch = 0, bootWatch2 = 0;
 
   async function applyAccent() {
     try {
@@ -253,12 +298,13 @@
     $('#t-pause').querySelector('svg').innerHTML = paused ? '<path d="M5 3l14 9-14 9V3z"/>' : '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>';
     $('#welcome').style.display = (running||booting) ? 'none' : 'flex';
     $('#hint').style.display = (running&&!paused) ? 'block' : 'none';
+    $('#screen').classList.toggle('run', running);
     const nm=$('#vmname'); nm.textContent=current?current.name:''; nm.classList.toggle('live', running&&!paused);
   }
 
   const OS_SVG = {
     linux: '<svg viewBox="0 0 24 24"><path fill="#fff" d="M12 3c-1.7 0-2.8 1.3-2.8 3.2 0 .9-.2 1.4-.7 2C7.2 9.6 6.2 10.8 6.2 12.7c0 .8.4 1.3 1 1.5.1 1 1.8 1.8 4.8 1.8s4.7-.8 4.8-1.8c.6-.2 1-.7 1-1.5 0-1.9-1-3.1-2.3-4.5-.5-.6-.7-1.1-.7-2C14.8 4.3 13.7 3 12 3z"/><circle cx="10.7" cy="6.6" r=".8" fill="#0a0a12"/><circle cx="13.3" cy="6.6" r=".8" fill="#0a0a12"/><path fill="#fbbf24" d="M12 6.9l1.05.75c0 .45-.47.8-1.05.8s-1.05-.35-1.05-.8z"/></svg>',
-    windows: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M3 5.4l7.2-1v6.9H3zM11 4.25L21 3v8.3H11zM3 12.7h7.2v6.9l-7.2-1zM11 12.7h10V21l-10-1.4z"/></svg>',
+    serenity: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8.5h18"/></svg>',
   };
 
   async function refreshLib(){
@@ -271,7 +317,7 @@
       card.className='vm-card'+(current&&current.id===vm.id?' active':'');
       const when=vm.created?new Date(vm.created).toLocaleDateString('de-DE'):'';
       const sz=vm.size?(vm.size/1048576).toFixed(0)+' MB':'';
-      const label=vm.os==='windows'?'ReactOS':'Arch Linux';
+      const label=vm.os==='serenity'?'SerenityOS':'Arch Linux';
       card.innerHTML='<div class="nm"><span class="os">'+(OS_SVG[vm.os]||OS_SVG.linux)+'</span><span class="t">'+escapeHtml(vm.name)+'</span></div>'
         +'<div class="meta">'+label+(when?' · '+when:'')+(sz?' · '+sz:'')+'</div>'
         +'<div class="del" title="VM löschen"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg></div>';
@@ -282,16 +328,21 @@
   }
   function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-  function makeV86(os, savedState){
+  function makeV86(os, hda, savedState, stateUrl){
     const p = PROFILES[os] || PROFILES.linux;
     const cfg = {
       wasm_path:'v86/v86.wasm', bios:{url:'v86/seabios.bin'}, vga_bios:{url:'v86/vgabios.bin'},
       memory_size:p.mem*1024*1024, vga_memory_size:p.vga*1024*1024,
       screen_container:$('#screen'), autostart:true, disable_speaker:true,
     };
-    if(p.hda) cfg.hda=p.hda;
+    if(hda) cfg.hda=hda;
+    else if(p.hda) cfg.hda=p.hda;
     if(p.filesystem) cfg.filesystem=p.filesystem;
-    cfg.initial_state = savedState ? { buffer: savedState } : { url: p.state };  // gespeicherter Snapshot überschreibt
+    if(p.cmdline) cfg.cmdline=p.cmdline;                            // Arch: Kernel-Cmdline
+    if(p.bzimage_initrd_from_filesystem) cfg.bzimage_initrd_from_filesystem=true;  // Kernel aus 9p laden
+    if(savedState) cfg.initial_state={ buffer: savedState };        // gespeicherter Snapshot
+    else if(stateUrl) cfg.initial_state={ url: stateUrl };          // lokal entpackter ReactOS-State
+    else if(p.state) cfg.initial_state={ url: p.state };
     const V = window.V86 || window.V86Starter;
     return new V(cfg);
   }
@@ -302,34 +353,58 @@
       if(!booting) return;
       if(e&&e.total){ powerProgress(Math.round((e.loaded/e.total)*100)); powerStatus('Lade VM-Daten … '+Math.round((e.loaded/e.total)*100)+'%'); }
     });
-    emulator.add_listener('emulator-started',()=>{ setTimeout(()=>{ booting=false; hidePower(); running=true; paused=false; setControls(); }, 1400); });
+    emulator.add_listener('emulator-started',()=>{ clearTimeout(bootWatch); clearTimeout(bootWatch2); setTimeout(()=>{ booting=false; hidePower(); running=true; paused=false; setControls(); }, 1400); });
   }
 
   function destroyEmu(){
+    clearTimeout(bootWatch); clearTimeout(bootWatch2);
     if(emulator){ try{ emulator.destroy(); }catch(e){} emulator=null; }
     const sc=$('#screen'); const cv=sc.querySelector('canvas'); if(cv) cv.style.display='none'; const tx=sc.querySelector('div'); if(tx) tx.textContent='';
   }
 
-  function startVm(vm, savedState){
+  async function ensureWindowsImage(){
+    let info=null; try{ info = api.studioImage ? await api.studioImage('windows') : null; }catch(e){}
+    if(info && info.ready && info.url) return info;
+    showPower('ReactOS <b>wird geladen</b>','Lade Windows-Image (einmalig, ~700 MB) …', false); powerProgress(0);
+    if(api.onStudioProgress) api.onStudioProgress((pr)=>{ if(pr){ if(typeof pr.pct==='number') powerProgress(pr.pct); if(pr.status) powerStatus(pr.status); } });
+    let dl=null; try{ dl = api.studioDownload ? await api.studioDownload('windows') : null; }catch(e){ dl={ok:false,error:String(e)}; }
+    if(!dl || !dl.ok || !dl.url) throw new Error((dl&&dl.error)||'Download fehlgeschlagen');
+    return dl;
+  }
+
+  async function startVm(vm, savedState){
     current=vm; booting=true; paused=false; running=false; setControls();
     const p=PROFILES[vm.os]||PROFILES.linux;
-    showPower('NOVA <b>Studio</b> startet', p.label+' wird geladen …', true);
+    showPower('NOVA <b>Studio</b> startet', p.label+' wird vorbereitet …', true);
+    let stateUrl=null;
+    if(p.needsState && !savedState){
+      showPower('ReactOS <b>wird vorbereitet</b>','Abbild laden & entpacken (einmalig) …', false); powerProgress(0);
+      if(api.onStudioProgress) api.onStudioProgress((pr)=>{ if(pr){ if(typeof pr.pct==='number') powerProgress(pr.pct); if(pr.status) powerStatus(pr.status); } });
+      let st=null; try{ st = api.studioState ? await api.studioState('windows') : null; }catch(e){ st={ok:false,error:String(e)}; }
+      if(!st || !st.ok || !st.url){ booting=false; hidePower(); setControls(); toast('Fehler: '+((st&&st.error)||'State konnte nicht geladen werden')); return; }
+      if(!current || current.id!==vm.id) return;   // zwischenzeitlich abgebrochen
+      stateUrl = st.url;
+    }
+    showPower('NOVA <b>Studio</b> startet', p.label+' startet … (Desktop kommt gleich)', true);
     try{
       destroyEmu();
-      emulator=makeV86(vm.os, savedState||null);
+      emulator=makeV86(vm.os, null, savedState||null, stateUrl);
       wireEmulator();
       window._novaEmu=emulator;
+      clearTimeout(bootWatch); clearTimeout(bootWatch2);
+      bootWatch = setTimeout(()=>{ if(booting) powerStatus('Lädt ungewöhnlich lange — bitte warten oder „VM ausschalten".'); }, 90000);
+      bootWatch2 = setTimeout(()=>{ if(booting) powerStatus('Konnte nicht laden. Bitte „VM ausschalten" und erneut versuchen.'); }, 220000);
     }catch(e){ booting=false; hidePower(); setControls(); toast('VM-Start fehlgeschlagen: '+(e.message||e)); return; }
     refreshLib();
   }
 
   function newVm(){
-    $('#vm-input').value=''; selOs='linux';
-    document.querySelectorAll('.os-opt').forEach((o)=>o.classList.toggle('sel', o.dataset.os==='linux'));
+    $('#vm-input').value=''; selOs='serenity';
+    document.querySelectorAll('.os-opt').forEach((o)=>o.classList.toggle('sel', o.dataset.os==='serenity'));
     $('#modal').classList.add('show'); setTimeout(()=>$('#vm-input').focus(),60);
   }
   function createVm(){
-    const name=($('#vm-input').value||'').trim() || (selOs==='windows'?'ReactOS VM':'Arch Linux VM');
+    const name=($('#vm-input').value||'').trim() || (selOs==='serenity'?'SerenityOS VM':'Arch Linux VM');
     $('#modal').classList.remove('show');
     const id='vm-'+Date.now().toString(36)+'-'+Math.floor(Math.random()*1e6).toString(36);
     startVm({ id, name, os:selOs }, null);
@@ -381,6 +456,27 @@
   $('#m-create').addEventListener('click', createVm);
   $('#vm-input').addEventListener('keydown',(e)=>{ if(e.key==='Enter') createVm(); });
   document.querySelectorAll('.os-opt').forEach((o)=>o.addEventListener('click',()=>{ selOs=o.dataset.os; document.querySelectorAll('.os-opt').forEach((x)=>x.classList.toggle('sel',x===o)); }));
+
+  // ---- Anzeige & Maus ----
+  const screenEl = $('#screen');
+  function setFit(mode){ screenEl.classList.remove('fit','actual','stretch'); screenEl.classList.add(mode); document.querySelectorAll('#seg-fit button').forEach((b)=>b.classList.toggle('on', b.dataset.fit===mode)); }
+  function setSharp(on){ screenEl.classList.toggle('sharp', !!on); document.querySelectorAll('#seg-sharp button').forEach((b)=>b.classList.toggle('on', (b.dataset.sharp==='1')===!!on)); }
+  function grabMouse(){ const cv=screenEl.querySelector('canvas'); if(cv && cv.requestPointerLock){ try{ cv.requestPointerLock(); }catch(e){} } }
+  function sendCtrlAltDel(){ if(!emulator) return; try{ if(emulator.keyboard_send_scancodes) emulator.keyboard_send_scancodes([0x1d,0x38,0x53,0xd3,0xb8,0x9d]); }catch(e){} }
+
+  $('#t-cfg').addEventListener('click', (e)=>{ e.stopPropagation(); $('#cfg-menu').classList.toggle('show'); });
+  document.addEventListener('click', (e)=>{ const m=$('#cfg-menu'), g=$('#t-cfg'); if(m && !m.contains(e.target) && g && !g.contains(e.target)) m.classList.remove('show'); });
+  document.querySelectorAll('#seg-fit button').forEach((b)=>b.addEventListener('click', ()=>setFit(b.dataset.fit)));
+  document.querySelectorAll('#seg-sharp button').forEach((b)=>b.addEventListener('click', ()=>setSharp(b.dataset.sharp==='1')));
+  $('#m-cad').addEventListener('click', ()=>{ sendCtrlAltDel(); $('#cfg-menu').classList.remove('show'); });
+  $('#m-grab').addEventListener('click', ()=>{ grabMouse(); $('#cfg-menu').classList.remove('show'); });
+  // Klick in den Bildschirm fängt die Maus ein (Pointer-Lock) → exakte, einzelne Maus; ESC gibt frei
+  screenEl.addEventListener('click', ()=>{ if(running) grabMouse(); });
+  document.addEventListener('pointerlockchange', ()=>{
+    const locked = !!document.pointerLockElement;
+    try{ if(emulator && emulator.mouse_set_status) emulator.mouse_set_status(locked); }catch(e){}
+    const h=$('#hint'); if(h) h.textContent = locked ? 'Maus aktiv — ESC gibt sie frei' : 'In den Bildschirm klicken, um Maus & Tastatur zu steuern';
+  });
 
   if(!(window.V86||window.V86Starter)){
     $('#welcome').innerHTML='<div class="orb"></div><h1>Engine nicht geladen</h1><p>Die v86-Engine konnte nicht initialisiert werden.</p>';

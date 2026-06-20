@@ -105,6 +105,62 @@ contextBridge.exposeInMainWorld('nova', {
     save: send('session:save'),
   },
 
+  shifter: {
+    toggle: invoke('shifter:toggle'),
+    status: invoke('shifter:status'),
+  },
+
+  google: {
+    login: invoke('google:login'),
+    onStatus: on('google:login-status'),
+  },
+
+  discord: {
+    onScreenSources: on('discord:screen-sources'),
+    pickScreen: send('discord:screen-pick'),
+  },
+
+  vault: {
+    status: invoke('vault:status'),
+    create: invoke('vault:create'),
+    unlock: invoke('vault:unlock'),
+    lock: invoke('vault:lock'),
+    keepalive: invoke('vault:keepalive'),
+    list: invoke('vault:list'),
+    get: invoke('vault:get'),
+    add: invoke('vault:add'),
+    update: (id, patch) => ipcRenderer.invoke('vault:update', id, patch),
+    delete: invoke('vault:delete'),
+    match: invoke('vault:match'),
+    fill: (id, origin) => ipcRenderer.invoke('vault:fill', id, origin),
+    generate: invoke('vault:generate'),
+    changeMaster: (oldPw, newPw) => ipcRenderer.invoke('vault:changeMaster', oldPw, newPw),
+    copy: (id, field) => ipcRenderer.invoke('vault:copy', id, field),
+    onLocked: on('vault:locked'),
+    onLockAt: on('vault:lock-at'),
+  },
+
+  share: {
+    config: invoke('share:config'),
+    setServer: invoke('share:setServer'),
+    ping: invoke('share:ping'),
+    login: invoke('share:login'),
+    logout: invoke('share:logout'),
+    me: invoke('share:me'),
+    files: invoke('share:files'),
+    upload: invoke('share:upload'),
+    download: (id, name) => ipcRenderer.invoke('share:download', id, name),
+    delete: invoke('share:delete'),
+    changePassword: invoke('share:changePassword'),
+    openDownloads: invoke('share:openDownloads'),
+    adminUsers: invoke('share:adminUsers'),
+    adminStats: invoke('share:adminStats'),
+    adminCreate: invoke('share:adminCreate'),
+    adminUpdate: (id, patch) => ipcRenderer.invoke('share:adminUpdate', id, patch),
+    adminDelete: invoke('share:adminDelete'),
+    onProgress: on('share:progress'),
+  },
+
   plugins: {
     state: invoke('plugins:state'),
     setNative: invoke('plugins:setNative'),

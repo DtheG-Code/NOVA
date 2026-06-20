@@ -1002,6 +1002,8 @@ function wireWebview(tab) {
       const goal = (e.args && e.args[0]) || '';
       if (tab.id !== state.activeId) activateTab(tab.id);
       if (goal) operator.run(goal);
+    } else if (e.channel && e.channel.indexOf('vault-') === 0) {
+      try { vault.onWebviewMessage(wv, e.channel, (e.args && e.args[0]) || {}); } catch {}
     }
   });
 }
@@ -2397,6 +2399,7 @@ function paletteCommands() {
     { label: 'Tastenkürzel anzeigen', ic: 'i-keys', run: openCheats },
     { label: 'Seite drucken', ic: 'i-file', run: () => { try { activeTab()?.wv.print(); } catch {} } },
     { label: 'DevTools öffnen', ic: 'i-bolt', run: () => { try { activeTab()?.wv.openDevTools(); } catch {} } },
+    { label: 'Bei Google anmelden (sicheres Fenster)', ic: 'i-shield', run: () => { try { window.nova.google.login(); } catch {} } },
     { label: 'Favoriten exportieren', ic: 'i-star', run: async () => { if (await window.nova.bookmarks.export()) toast('Favoriten exportiert'); } },
     { label: 'Cache leeren', ic: 'i-trash', run: async () => { await window.nova.sys.clearData('cache'); toast('Cache geleert'); } },
   ];
@@ -4362,6 +4365,46 @@ const claude = (() => {
   return { toggle, close, applySettings, relayout, setDock, isOpen: () => open, ask, runOnce, pickUrl, prepare, release, abort, reloadChat, freshChat, setModel, getModel };
 })();
 
+/* ============================================================ Dock-Manager — andockbare Panels koordinieren */
+// Agent, Discord, Tresor, Share docken alle an #view-area an. Der Manager STAPELT mehrere Panels
+// pro Seite nebeneinander (statt sie zu überlappen), summiert das Padding pro Seite und positioniert
+// bei jeder Änderung (öffnen/schließen/Seite/einklappen/Resize) alle Panels neu. So gibt es nie eine
+// Überlappung — egal ob 1 oder mehrere Panels links/rechts/eingeklappt sind.
+const dockManager = (() => {
+  const GAP = 8, COLLAPSED_W = 66;
+  const panels = new Map();   // id → { el, side, collapsed, full, open, width:()=>number }
+  let roAttached = false;
+  function ensureRO() {
+    if (roAttached) return; const va = $('#view-area'); if (!va) return;
+    try { new ResizeObserver(() => layout()).observe(va, { box: 'border-box' }); roAttached = true; } catch {}
+  }
+  function set(id, info) { panels.set(id, Object.assign(panels.get(id) || {}, info)); ensureRO(); layout(); }
+  function close(id) { const p = panels.get(id); if (p) p.open = false; layout(); }
+  function layout() {
+    const va = $('#view-area'); if (!va) return;
+    const r = va.getBoundingClientRect();
+    let lx = r.left, rx = window.innerWidth - r.right, leftPad = 0, rightPad = 0;
+    for (const p of panels.values()) {
+      if (!p.open || !p.el) continue;
+      p.el.style.top = Math.round(r.top) + 'px';
+      if (p.full && !p.collapsed) {                       // Vollbild: deckt den ganzen Inhaltsbereich
+        p.el.style.left = Math.round(r.left) + 'px'; p.el.style.right = 'auto'; p.el.style.width = Math.round(r.width) + 'px';
+        continue;
+      }
+      const w = p.collapsed ? COLLAPSED_W : Math.round((p.width && p.width()) || 460);
+      p.el.style.width = w + 'px';
+      if (p.side === 'left') { p.el.style.left = Math.round(lx) + 'px'; p.el.style.right = 'auto'; lx += w + GAP; leftPad += w + GAP; }
+      else { p.el.style.right = Math.round(rx) + 'px'; p.el.style.left = 'auto'; rx += w + GAP; rightPad += w + GAP; }
+    }
+    va.style.paddingLeft = leftPad ? leftPad + 'px' : '';
+    va.style.paddingRight = rightPad ? rightPad + 'px' : '';
+  }
+  let raf = 0;
+  function layoutAnimated() { try { cancelAnimationFrame(raf); } catch {} const t0 = performance.now(); const tick = (t) => { layout(); if (t - t0 < 460) raf = requestAnimationFrame(tick); }; raf = requestAnimationFrame(tick); }
+  window.addEventListener('resize', layout);
+  return { set, close, layout, layoutAnimated };
+})();
+
 /* ============================================================ NOVA Operator (AI-Operable Web — Phase 1) */
 // DOM-Intelligence-Layer + sichtbare Bedienung: analysiert die aktive Seite strukturell,
 // markiert interaktive Elemente sichtbar auf der Seite und führt Aktionen mit Fokus-Animation aus.
@@ -4400,36 +4443,16 @@ const operator = (() => {
   // Bühne andocken — exakt bündig mit dem Inhaltsbereich (#view-area) → gleiche Oberkante wie der Tab.
   // Seite (links/rechts) + eingeklappt berücksichtigen; Inhalt zur jeweiligen Seite zusammenschieben.
   function stageDock() {
-    const va = $('#view-area'); if (!va) return;
-    const r = va.getBoundingClientRect();
+    if (!stage) return;
     stage.classList.toggle('as-left', stageSide === 'left');
     stage.classList.toggle('as-collapsed', stageCollapsed);
-    stage.style.top = Math.round(r.top) + 'px';
-    // An den INHALTSBEREICH andocken (nicht ans Fenster) → liegt NICHT über der Favoritenleiste links.
-    if (stageSide === 'left') { stage.style.left = Math.round(r.left) + 'px'; stage.style.right = 'auto'; }
-    else { stage.style.left = 'auto'; stage.style.right = Math.round(window.innerWidth - r.right) + 'px'; }
-    va.style.paddingLeft = ''; va.style.paddingRight = '';
-    const w = stage.offsetWidth + 8;
-    if (stageSide === 'left') va.style.paddingLeft = w + 'px';
-    else va.style.paddingRight = w + 'px';
+    dockManager.set('agent', { el: stage, side: stageSide, collapsed: stageCollapsed, full: false, open: stageMode, width: () => Math.round(Math.min(880, Math.max(440, window.innerWidth * 0.47))) });
   }
   // Layout ändert sich animiert (Favoritenleiste ein-/ausklappen) → Bühne pro Frame MITwandern,
   // statt erst nach der Sidebar-Animation zu springen. Trackt #view-area über ~0,42 s.
-  let stageAnimRaf = 0;
   function relayoutAnimated() {
-    if (!stageMode || stage.classList.contains('hidden')) { return; }
-    const va = $('#view-area'); if (!va) return;
-    try { cancelAnimationFrame(stageAnimRaf); } catch {}
-    const t0 = performance.now();
-    const tick = (t) => {
-      const r = va.getBoundingClientRect();
-      stage.style.top = Math.round(r.top) + 'px';
-      if (stageSide === 'left') { stage.style.left = Math.round(r.left) + 'px'; stage.style.right = 'auto'; }
-      else { stage.style.left = 'auto'; stage.style.right = Math.round(window.innerWidth - r.right) + 'px'; }
-      if (t - t0 < 420) stageAnimRaf = requestAnimationFrame(tick);
-      else stageDock();   // exakter Abschluss inkl. Padding
-    };
-    stageAnimRaf = requestAnimationFrame(tick);
+    if (!stageMode || stage.classList.contains('hidden')) return;
+    dockManager.layout();   // Neu anordnen; der ResizeObserver des Managers verfolgt die Sidebar-Animation
   }
   function setStageSide(side) {
     if (side !== 'left' && side !== 'right') return;
@@ -4454,13 +4477,12 @@ const operator = (() => {
   }
   function closeStage() {
     stageMode = false;
-    // BEIDE Seiten räumen (links ODER rechts angedockt) → Inhalt zieht sich wieder gerade (noch mit as-open-Transition = smooth)
-    const va = $('#view-area'); if (va) { va.style.paddingLeft = ''; va.style.paddingRight = ''; }
+    dockManager.close('agent');   // übrige Panels + Inhalt-Padding neu berechnen (smooth via as-open-Transition)
     stage.classList.add('closing');
     setTimeout(() => {
       stage.classList.add('hidden'); stage.classList.remove('closing');
       document.body.classList.remove('as-open');
-      stage.style.left = ''; stage.style.right = ''; stage.style.top = '';   // Positionen zurücksetzen
+      stage.style.left = ''; stage.style.right = ''; stage.style.top = ''; stage.style.width = '';
     }, 320);
   }
   function stageReset() {                          // frischer „neuer Tab" für einen neuen Lauf
@@ -5423,6 +5445,14 @@ const teEdit = (() => {
     ['netmon', 'i-activity', 'Netzwerk-Monitor'], ['screenshot', 'i-camera', 'Screenshot'], ['split', 'i-split', 'Split View'],
     ['shield', 'i-shield', 'NOVA Shield'], ['operator', 'i-operator', 'NOVA Operator'], ['plugins', 'i-plugin', 'Plugin-Store'], ['palette', 'i-bolt', 'Befehlspalette'],
   ];
+  // NOVA-eigene Werkzeuge (eigene Buttons, kein data-tool) — standardmäßig sichtbar, per Set ausblendbar
+  const EXTRA = [
+    ['vault', '#btn-vault', 'NOVA Tresor'],
+    ['share', '#btn-share', 'NOVA Share'],
+    ['studio', '#btn-studio', 'NOVA Studio'],
+    ['shifter', '#btn-shifter', 'Shifter'],
+    ['discord', '#btn-discord', 'Discord'],
+  ];
   let openFlag = false;
   let extList = [];   // aktuell geladene Erweiterungs-Actions (von extActions gesetzt)
 
@@ -5431,6 +5461,12 @@ const teEdit = (() => {
     return Array.isArray(t) ? t : TOOLS.map((x) => x[0]);
   }
   function hiddenExt() { return new Set(state.settings.topbarExtHidden || []); }
+  function extraHidden() { return new Set(state.settings.topbarExtraHidden || []); }
+  function extraIcon(sel) {
+    const b = document.querySelector(sel), svg = b && b.querySelector('svg');
+    if (svg) { const c = svg.cloneNode(true); c.removeAttribute('width'); c.removeAttribute('height'); return c; }
+    return icon('i-plugin');
+  }
   function apply() {
     const vis = new Set(visible());
     const hidden = hiddenExt();
@@ -5439,6 +5475,8 @@ const teEdit = (() => {
       if (t.startsWith('ext:')) btn.classList.toggle('hidden', hidden.has(t.slice(4)));
       else btn.classList.toggle('hidden', !vis.has(t));
     }
+    const exHid = extraHidden();
+    for (const [key, sel] of EXTRA) { const b = document.querySelector(sel); if (b) b.classList.toggle('hidden', exHid.has(key)); }
   }
   function setExtList(list) { extList = list || []; }
   function toggle(force) {
@@ -5463,6 +5501,27 @@ const teEdit = (() => {
         const arr = TOOLS.map((x) => x[0]).filter((k) => cur.has(k));
         state.settings.topbarTools = arr;
         window.nova.settings.set({ topbarTools: arr });
+        apply();
+      });
+      sw.appendChild(inp); sw.appendChild(el('i'));
+      row.append(sw);
+      list.appendChild(row);
+    }
+    // NOVA-eigene Werkzeuge (Studio, Shifter, Discord)
+    list.appendChild(el('div', 'te-sep', 'NOVA-Werkzeuge'));
+    const exHid = extraHidden();
+    for (const [key, sel, label] of EXTRA) {
+      const row = el('div', 'te-row');
+      row.appendChild(extraIcon(sel));
+      row.appendChild(el('span', null, label));
+      const sw = el('label', 'switch');
+      const inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = !exHid.has(key);
+      inp.addEventListener('change', () => {
+        const cur = extraHidden();
+        inp.checked ? cur.delete(key) : cur.add(key);
+        const arr = [...cur];
+        state.settings.topbarExtraHidden = arr;
+        window.nova.settings.set({ topbarExtraHidden: arr });
         apply();
       });
       sw.appendChild(inp); sw.appendChild(el('i'));
@@ -6033,9 +6092,9 @@ const chromeNebula = (() => {
   }
   function startAll() { [tabR, sideR].forEach((r) => r && r.start()); }
   function stopAll() { [tabR, sideR].forEach((r) => r && r.stop()); }
-  // Effizienz: bei Fokusverlust / unsichtbar pausieren
-  window.addEventListener('blur', stopAll);
-  window.addEventListener('focus', () => { if (active) startAll(); });
+  // Effizienz: NUR pausieren, wenn das Fenster wirklich unsichtbar/minimiert ist (visibilitychange).
+  // NICHT bei window.blur — das feuert auch, wenn ein Webview den Fokus bekommt (also ständig beim Surfen),
+  // wodurch die Nebula einfror. Chromium drosselt RAF bei verdeckten Fenstern ohnehin selbst.
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopAll(); else if (active) startAll(); });
 
   function apply(q) {
@@ -6045,7 +6104,7 @@ const chromeNebula = (() => {
     document.body.classList.add('neb-gpu');
     ensure();
     [tabR, sideR].forEach((r) => r && r.setQuality(q));
-    if (!document.hidden && document.hasFocus()) startAll();
+    if (!document.hidden) startAll();   // sofort loslaufen, nicht auf Fokus warten
   }
   return { apply };
 })();
@@ -6104,6 +6163,713 @@ const studio = (() => {
 
   return { open, close, toggle };
 })();
+
+/* ============================================================ Shifter (PC wach halten) */
+const shifter = (() => {
+  const btn = $('#btn-shifter'), pop = $('#shifter-pop'), orb = $('#sh-orb');
+  let active = false, open = false;
+  function render() {
+    btn.classList.toggle('active', active);
+    pop.classList.toggle('on', active);
+    orb.classList.toggle('idle', !active);
+    $('#sh-sub').textContent = active ? 'Aktiv — dein PC bleibt wach' : 'Hält deinen PC wach';
+    $('#sh-toggle').querySelector('span').textContent = active ? 'Deaktivieren' : 'Aktivieren';
+  }
+  async function toggle() {
+    try { const r = await window.nova.shifter.toggle(); active = !!(r && r.active); } catch {}
+    render();
+    toast(active ? 'Shifter aktiv — dein PC bleibt wach' : 'Shifter deaktiviert', active ? 'i-bolt' : 'i-check');
+  }
+  function openPop() { open = true; render(); pop.classList.remove('hidden'); positionPop(pop, btn); }
+  function closePop() { open = false; pop.classList.add('hidden'); }
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); open ? closePop() : openPop(); });
+  const t = $('#sh-toggle'); if (t) t.addEventListener('click', toggle);
+  document.addEventListener('click', (e) => { if (open && !pop.contains(e.target) && !btn.contains(e.target)) closePop(); });
+  (async () => { try { const r = await window.nova.shifter.status(); active = !!(r && r.active); render(); } catch {} })();
+  return { toggle };
+})();
+
+/* ============================================================ NOVA Discord (andockbare Split-Bühne + Call-Status + Screen-Share) */
+const discord = (() => {
+  const stageEl = $('#discord-stage'), btn = $('#btn-discord');
+  if (!stageEl) return { toggle() {} };
+  let wv = null, mode = false, collapsed = false, side = 'right', layout = 'split', callInfo = {};
+  const splitWidth = () => Math.round(Math.min(860, Math.max(420, window.innerWidth * 0.44)));
+
+  function ensureWv() {
+    if (wv) return wv;
+    wv = document.createElement('webview');
+    wv.setAttribute('partition', 'persist:nova-discord');
+    wv.setAttribute('allowpopups', '');
+    if (state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
+    wv.setAttribute('src', 'https://discord.com/app');
+    wv.addEventListener('ipc-message', (e) => { if (e.channel === 'discord-call') updateCall(e.args && e.args[0]); });
+    $('#dc-viewport').appendChild(wv);
+    return wv;
+  }
+  function dock() {
+    const full = layout === 'full' && !collapsed;
+    stageEl.classList.toggle('dc-left', side === 'left' && !full);
+    stageEl.classList.toggle('dc-collapsed', collapsed);
+    stageEl.classList.toggle('dc-fullscreen', full);
+    dockManager.set('discord', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+  }
+  function setLayout(l) {
+    if (l !== 'split' && l !== 'full') return;
+    layout = l; collapsed = false;
+    const fb = $('#dc-full'); if (fb) fb.classList.toggle('active', l === 'full');
+    try { state.settings.discordLayout = l; window.nova.settings.set({ discordLayout: l }); } catch {}
+    dock();
+  }
+  function setSide(s) {
+    if (s !== 'left' && s !== 'right') return;
+    side = s;
+    try { state.settings.discordSide = s; window.nova.settings.set({ discordSide: s }); } catch {}
+    dock();
+  }
+  function setCollapsed(on) {
+    collapsed = !!on;
+    const cb = $('#dc-collapse'); if (cb) cb.title = collapsed ? 'Ausklappen' : 'Einklappen';
+    dock();
+  }
+  function open() {
+    ensureWv(); mode = true; collapsed = false;
+    if (state.settings && state.settings.discordSide === 'left') side = 'left';
+    if (state.settings && (state.settings.discordLayout === 'full' || state.settings.discordLayout === 'split')) layout = state.settings.discordLayout;
+    const fb = $('#dc-full'); if (fb) fb.classList.toggle('active', layout === 'full');
+    stageEl.classList.remove('hidden', 'closing');
+    document.body.classList.add('dc-open');
+    requestAnimationFrame(dock);
+    if (btn) btn.classList.add('active');
+  }
+  function close() {
+    if (!mode) return;
+    mode = false;
+    dockManager.close('discord');   // übrige Panels + Inhalt-Padding neu berechnen
+    stageEl.classList.add('closing');
+    setTimeout(() => {
+      stageEl.classList.add('hidden'); stageEl.classList.remove('closing');
+      document.body.classList.remove('dc-open');
+      stageEl.style.left = ''; stageEl.style.right = ''; stageEl.style.top = ''; stageEl.style.width = '';
+    }, 420);
+    if (btn) btn.classList.remove('active');
+  }
+  function toggle() { mode ? close() : open(); }
+
+  function updateCall(info) {
+    callInfo = info || {};
+    const inCall = !!callInfo.inCall;
+    const chip = $('#dc-callchip');
+    if (chip) { chip.classList.toggle('hidden', !inCall); const tx = $('#dc-callchip-tx'); if (tx) tx.textContent = inCall ? (callInfo.channel || 'im Call') : 'im Call'; }
+    if (btn) btn.classList.toggle('in-call', inCall);
+    const rc = $('#dc-rail-call'); if (rc) rc.classList.toggle('hidden', !inCall);
+    const ch = $('#dc-rail-ch'); if (ch) ch.textContent = callInfo.channel || '';
+    const sub = $('#dc-sub'); if (sub) sub.textContent = inCall ? 'im Sprachkanal' : 'in NOVA';
+    const people = Array.isArray(callInfo.people) ? callInfo.people : [];
+    const wrap = $('#dc-rail-people');
+    if (wrap) {
+      wrap.innerHTML = '';
+      people.slice(0, 5).forEach((n) => { const a = document.createElement('span'); a.className = 'dc-rail-ava'; a.textContent = ((n || '?').trim().charAt(0) || '?'); a.title = n; wrap.appendChild(a); });
+      if (people.length > 5) { const m = document.createElement('span'); m.className = 'dc-rail-more'; m.textContent = '+' + (people.length - 5); wrap.appendChild(m); }
+    }
+  }
+
+  // ---- Ziehen zum Andocken (links/rechts) ----
+  function showSnap(s) {
+    const va = $('#view-area'); if (!va) return;
+    const r = va.getBoundingClientRect();
+    const w = splitWidth();
+    const sn = $('#dc-snap'); if (!sn) return; sn.classList.remove('hidden');
+    sn.style.top = Math.round(r.top) + 'px'; sn.style.height = Math.round(r.height - 10) + 'px'; sn.style.width = w + 'px';
+    if (s === 'left') { sn.style.left = Math.round(r.left) + 'px'; sn.style.right = 'auto'; }
+    else { sn.style.right = Math.round(window.innerWidth - r.right) + 'px'; sn.style.left = 'auto'; }
+  }
+  const head = $('#dc-head');
+  if (head) head.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('button'))) return;
+    e.preventDefault();
+    const mask = $('#dc-dragmask'); if (mask) mask.classList.remove('hidden');
+    stageEl.classList.add('dc-grab');
+    let curSide = side;
+    const onMove = (ev) => { curSide = ev.clientX < window.innerWidth / 2 ? 'left' : 'right'; showSnap(curSide); };
+    const onUp = () => {
+      if (mask) mask.classList.add('hidden');
+      stageEl.classList.remove('dc-grab');
+      const sn = $('#dc-snap'); if (sn) sn.classList.add('hidden');
+      setLayout('split'); setSide(curSide);   // an den Rand ziehen ⇒ Split-Ansicht
+      window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+    showSnap(curSide);
+  });
+
+  // ---- Bildschirmfreigabe-Auswahl ----
+  let pickSources = [], pickKind = 'screen', pickSel = null;
+  function showPicker() { const ov = $('#dc-screenpick'); if (!ov) return; ov.classList.remove('hidden'); renderTabs(); renderGrid(); const sh = $('#dc-sp-share'); if (sh) sh.disabled = true; }
+  function hidePicker() { const ov = $('#dc-screenpick'); if (ov) ov.classList.add('hidden'); pickSel = null; }
+  function renderTabs() { document.querySelectorAll('.dc-sp-tab').forEach((t) => t.classList.toggle('active', t.dataset.kind === pickKind)); }
+  function renderGrid() {
+    const grid = $('#dc-sp-grid'); if (!grid) return; grid.innerHTML = '';
+    const items = pickSources.filter((s) => pickKind === 'screen' ? String(s.id).startsWith('screen:') : String(s.id).startsWith('window:'));
+    if (!items.length) { const em = document.createElement('div'); em.className = 'dc-sp-empty'; em.textContent = 'Keine Quellen gefunden.'; grid.appendChild(em); return; }
+    items.forEach((s) => {
+      const it = document.createElement('div'); it.className = 'dc-sp-item' + (pickSel === s.id ? ' selected' : '');
+      const img = document.createElement('img'); img.className = 'dc-sp-thumb'; img.src = s.thumb || ''; it.appendChild(img);
+      const nm = document.createElement('div'); nm.className = 'dc-sp-name';
+      if (s.icon) { const ic = document.createElement('img'); ic.src = s.icon; nm.appendChild(ic); }
+      const sp = document.createElement('span'); sp.textContent = s.name || 'Quelle'; nm.appendChild(sp); it.appendChild(nm);
+      it.addEventListener('click', () => { pickSel = s.id; renderGrid(); const sh = $('#dc-sp-share'); if (sh) sh.disabled = false; });
+      grid.appendChild(it);
+    });
+  }
+  if (window.nova.discord && window.nova.discord.onScreenSources) {
+    window.nova.discord.onScreenSources((list) => { pickSources = list || []; pickKind = 'screen'; pickSel = null; showPicker(); });
+  }
+  document.querySelectorAll('.dc-sp-tab').forEach((t) => t.addEventListener('click', () => { pickKind = t.dataset.kind; pickSel = null; const sh = $('#dc-sp-share'); if (sh) sh.disabled = true; renderTabs(); renderGrid(); }));
+  const spCancel = $('#dc-sp-cancel'); if (spCancel) spCancel.addEventListener('click', () => { try { window.nova.discord.pickScreen(null); } catch {} hidePicker(); });
+  const spShare = $('#dc-sp-share'); if (spShare) spShare.addEventListener('click', () => { if (!pickSel) return; const audio = !!($('#dc-sp-audio') && $('#dc-sp-audio').checked); try { window.nova.discord.pickScreen({ id: pickSel, audio }); } catch {} hidePicker(); });
+
+  // ---- Buttons + Layout-Tracking ----
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  const bClose = $('#dc-close'); if (bClose) bClose.addEventListener('click', close);
+  const bColl = $('#dc-collapse'); if (bColl) bColl.addEventListener('click', () => setCollapsed(true));
+  const bSide = $('#dc-side'); if (bSide) bSide.addEventListener('click', () => setSide(side === 'left' ? 'right' : 'left'));
+  const bFull = $('#dc-full'); if (bFull) bFull.addEventListener('click', () => setLayout(layout === 'full' ? 'split' : 'full'));
+  const bReload = $('#dc-reload'); if (bReload) bReload.addEventListener('click', () => { try { wv && wv.reload(); } catch {} });
+  const rail = $('#dc-rail'); if (rail) rail.addEventListener('click', () => setCollapsed(false));
+  try { const ro = new ResizeObserver(() => { if (mode) dock(); }); const va = $('#view-area'); if (va) ro.observe(va, { box: 'border-box' }); } catch {}
+  window.addEventListener('resize', () => { if (mode) dock(); });
+
+  return { toggle, open, close };
+})();
+
+/* ============================================================ NOVA Tresor (Passwort-Manager: andockbar + Autofill) */
+const vault = (() => {
+  const stageEl = $('#vault-stage'), btn = $('#btn-vault');
+  if (!stageEl) return { onWebviewMessage() {} };
+  let mode = false, collapsed = false, side = 'right', layout = 'split';
+  let entries = [], editingId = null, pendingSave = null, saveOfferData = null, lastGen = '';
+  let lockAt = 0, timerIv = null, lastKeep = 0;
+  const splitWidth = () => Math.round(Math.min(900, Math.max(440, window.innerWidth * 0.46)));
+  const V = window.nova.vault;
+  const host = (u) => { try { return hostOf(u) || ''; } catch { return ''; } };
+
+  // ---------------- Andocken (Vollbild / Split / Rand-Leiste) ----------------
+  function dock() {
+    const full = layout === 'full' && !collapsed;
+    stageEl.classList.toggle('vt-left', side === 'left' && !full);
+    stageEl.classList.toggle('vt-collapsed', collapsed);
+    stageEl.classList.toggle('vt-fullscreen', full);
+    document.body.classList.toggle('vt-full-cover', full);   // Vollbild → Webviews dahinter ausblenden
+    dockManager.set('vault', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+  }
+  function setSide(s) { if (s !== 'left' && s !== 'right') return; side = s; try { state.settings.vaultSide = s; window.nova.settings.set({ vaultSide: s }); } catch {} dock(); }
+  function setLayout(l) { if (l !== 'split' && l !== 'full') return; layout = l; collapsed = false; const fb = $('#vt-full'); if (fb) fb.classList.toggle('active', l === 'full'); try { state.settings.vaultLayout = l; window.nova.settings.set({ vaultLayout: l }); } catch {} dock(); }
+  function setCollapsed(on) { collapsed = !!on; const cb = $('#vt-collapse'); if (cb) cb.title = collapsed ? 'Ausklappen' : 'Einklappen'; dock(); }
+  async function open() {
+    mode = true; collapsed = false;
+    if (state.settings && state.settings.vaultSide === 'left') side = 'left';
+    if (state.settings && (state.settings.vaultLayout === 'full' || state.settings.vaultLayout === 'split')) layout = state.settings.vaultLayout;
+    const fb = $('#vt-full'); if (fb) fb.classList.toggle('active', layout === 'full');
+    stageEl.classList.remove('hidden', 'closing');
+    document.body.classList.add('vt-open');
+    requestAnimationFrame(dock);
+    if (btn) btn.classList.add('active');
+    await syncStatus(); showScreen();
+  }
+  function close() {
+    if (!mode) return;
+    mode = false;
+    document.body.classList.remove('vt-full-cover');   // Inhaltsbereich sofort wieder sichtbar (fährt mit auf)
+    dockManager.close('vault');
+    stageEl.classList.add('closing');
+    setTimeout(() => { stageEl.classList.add('hidden'); stageEl.classList.remove('closing'); document.body.classList.remove('vt-open'); stageEl.style.left = ''; stageEl.style.right = ''; stageEl.style.top = ''; stageEl.style.width = ''; }, 420);
+    if (btn) btn.classList.remove('active');
+  }
+  function toggle() { mode ? close() : open(); }
+  function showSnap(s) {
+    const va = $('#view-area'); if (!va) return; const r = va.getBoundingClientRect(); const w = splitWidth();
+    const sn = $('#vt-snap'); if (!sn) return; sn.classList.remove('hidden');
+    sn.style.top = Math.round(r.top) + 'px'; sn.style.height = Math.round(r.height - 10) + 'px'; sn.style.width = w + 'px';
+    if (s === 'left') { sn.style.left = Math.round(r.left) + 'px'; sn.style.right = 'auto'; } else { sn.style.right = Math.round(window.innerWidth - r.right) + 'px'; sn.style.left = 'auto'; }
+  }
+  const head = $('#vt-head');
+  if (head) head.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('button'))) return;
+    e.preventDefault();
+    const mask = $('#vt-dragmask'); if (mask) mask.classList.remove('hidden');
+    stageEl.classList.add('vt-grab');
+    let curSide = side;
+    const onMove = (ev) => { curSide = ev.clientX < window.innerWidth / 2 ? 'left' : 'right'; showSnap(curSide); };
+    const onUp = () => { if (mask) mask.classList.add('hidden'); stageEl.classList.remove('vt-grab'); const sn = $('#vt-snap'); if (sn) sn.classList.add('hidden'); setLayout('split'); setSide(curSide); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+    showSnap(curSide);
+  });
+
+  // ---------------- Status / Bildschirme ----------------
+  let unlocked = false, hasVault = false, createMode = false;
+  async function syncStatus() { try { const s = await V.status(); hasVault = !!s.exists; unlocked = !!s.unlocked; return s; } catch { return {}; } }
+  function updateChrome() {
+    const sub = $('#vt-sub'); if (sub) sub.textContent = unlocked ? 'entsperrt' : (hasVault ? 'gesperrt' : 'einrichten');
+    const st = $('#vt-rail-state'); if (st) st.classList.toggle('unlocked', unlocked);
+    const lb = $('#vt-lock'); if (lb) lb.classList.toggle('hidden', !unlocked);
+    if (btn) btn.classList.toggle('unlocked', unlocked);
+  }
+  function showScreen() {
+    const lock = $('#vt-lock-screen'), main = $('#vt-main'), ed = $('#vt-editor');
+    ed.classList.add('hidden');
+    if (!unlocked) { lock.classList.remove('hidden'); main.classList.add('hidden'); renderLock(); stopTimer(); }
+    else { lock.classList.add('hidden'); main.classList.remove('hidden'); loadList(); V.keepalive().then((r) => { if (r && r.ok) lockAt = r.at || 0; startTimer(); }).catch(() => startTimer()); }
+    updateChrome();
+  }
+  function renderLock() {
+    createMode = !hasVault;
+    $('#vt-lock-title').textContent = createMode ? 'Tresor einrichten' : 'Tresor entsperren';
+    $('#vt-lock-sub').textContent = createMode ? 'Lege ein starkes Master-Passwort fest' : 'Master-Passwort eingeben';
+    $('#vt-confirm-wrap').classList.toggle('hidden', !createMode);
+    $('#vt-strength').classList.toggle('hidden', !createMode);
+    $('#vt-lock-go').textContent = createMode ? 'Tresor erstellen' : 'Entsperren';
+    $('#vt-master').value = ''; $('#vt-master2').value = ''; $('#vt-lock-msg').textContent = '';
+    setTimeout(() => { try { $('#vt-master').focus(); } catch {} }, 90);
+  }
+  function strength(pw) { let s = 0; if (pw.length >= 8) s++; if (pw.length >= 12) s++; if (pw.length >= 16) s++; if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++; if (/\d/.test(pw)) s++; if (/[^A-Za-z0-9]/.test(pw)) s++; return Math.min(5, s); }
+  const STR_TX = ['sehr schwach', 'schwach', 'okay', 'gut', 'stark', 'exzellent'];
+  function paintStrength(barFill, txEl, pw) {
+    const s = strength(pw); const pct = (s / 5) * 100;
+    const col = s <= 1 ? '#ff5c6c' : s === 2 ? '#ffac4b' : s === 3 ? '#ffd24b' : s === 4 ? '#5fd0ff' : '#3ad07e';
+    if (barFill) { barFill.style.width = pct + '%'; barFill.style.background = col; }
+    if (txEl) { txEl.textContent = pw ? STR_TX[s] : '…'; txEl.style.color = col; }
+  }
+
+  // ---------------- Liste ----------------
+  async function loadList() {
+    const r = await V.list();
+    if (!r.ok) { if (r.locked) { unlocked = false; showScreen(); } return; }
+    entries = r.items || []; renderList();
+  }
+  function renderList() {
+    const q = ($('#vt-search').value || '').toLowerCase().trim();
+    const list = $('#vt-list'); list.innerHTML = '';
+    const items = entries.filter((e) => !q || ((e.title || '') + ' ' + (e.url || '') + ' ' + (e.username || '')).toLowerCase().includes(q)).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    $('#vt-empty').classList.toggle('hidden', entries.length > 0);
+    for (const e of items) {
+      const row = el('div', 'vt-item'); row.setAttribute('role', 'button'); row.tabIndex = 0;
+      const av = e.url ? faviconEl(e.url, 'vt-item-av') : el('span', 'vt-item-av letter', (e.title || '?').trim().charAt(0).toUpperCase() || '?');
+      const tx = el('div', 'vt-item-tx'); tx.appendChild(el('b', null, e.title || host(e.url) || 'Eintrag')); tx.appendChild(el('span', null, e.username || host(e.url) || ''));
+      const cp = el('button', 'vt-item-cp'); cp.title = 'Passwort kopieren'; cp.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+      cp.addEventListener('click', (ev) => { ev.stopPropagation(); copyField(e.id, 'password'); });
+      row.append(av, tx, cp);
+      row.addEventListener('click', () => openEditor(e.id));
+      list.appendChild(row);
+    }
+  }
+  async function copyField(id, field) { const r = await V.copy(id, field); if (r && r.ok) toast('Kopiert — wird in 20 s automatisch geleert', 'i-check'); else if (r && r.locked) { unlocked = false; showScreen(); } }
+
+  // ---------------- Editor ----------------
+  async function openEditor(id) {
+    editingId = id || null;
+    $('#vt-main').classList.add('hidden'); $('#vt-editor').classList.remove('hidden');
+    $('#vt-ed-title').textContent = id ? 'Eintrag bearbeiten' : 'Neuer Eintrag';
+    $('#vt-ed-del').classList.toggle('hidden', !id);
+    const set = (s, v) => { const e = $(s); if (e) e.value = v || ''; };
+    if (id) { const r = await V.get(id); if (r.ok) { const e = r.entry; set('#vt-f-title', e.title); set('#vt-f-url', e.url); set('#vt-f-user', e.username); set('#vt-f-pass', e.password); set('#vt-f-notes', e.notes); } }
+    else { ['#vt-f-title', '#vt-f-url', '#vt-f-user', '#vt-f-pass', '#vt-f-notes'].forEach((s) => set(s, '')); try { const u = activeTab() && activeTab().url; if (u && !isInternal(u)) { set('#vt-f-url', host(u)); set('#vt-f-title', host(u)); } } catch {} }
+    const p = $('#vt-f-pass'); if (p) p.type = 'password';
+    paintStrength(null, null, ''); updateMeter();
+    setTimeout(() => { try { (id ? $('#vt-f-pass') : $('#vt-f-title')).focus(); } catch {} }, 60);
+  }
+  function updateMeter() { const m = $('#vt-f-meter'); if (m) { const s = strength($('#vt-f-pass').value || ''); m.style.width = (s / 5 * 100) + '%'; m.style.background = s <= 1 ? '#ff5c6c' : s === 2 ? '#ffac4b' : s === 3 ? '#ffd24b' : s === 4 ? '#5fd0ff' : '#3ad07e'; } }
+  function backToList() { $('#vt-editor').classList.add('hidden'); $('#vt-main').classList.remove('hidden'); loadList(); }
+  async function saveEditor() {
+    const patch = { title: $('#vt-f-title').value.trim(), url: $('#vt-f-url').value.trim(), username: $('#vt-f-user').value, password: $('#vt-f-pass').value, notes: $('#vt-f-notes').value };
+    if (!patch.password && !patch.username) { toast('Benutzername oder Passwort fehlt', 'i-warn'); return; }
+    const r = editingId ? await V.update(editingId, patch) : await V.add(patch);
+    if (!r.ok) { toast(r.locked ? 'Tresor ist gesperrt' : 'Speichern fehlgeschlagen', 'i-warn'); if (r.locked) { unlocked = false; showScreen(); } return; }
+    toast('Im Tresor gespeichert', 'i-check'); backToList();
+  }
+  async function deleteEntry() { if (!editingId) return; const r = await V.delete(editingId); if (r.ok) { toast('Eintrag gelöscht', 'i-check'); backToList(); } }
+
+  // ---------------- Generator ----------------
+  async function genNow() {
+    const opts = { length: +$('#vt-gen-len').value, upper: $('#vt-gen-upper').checked, lower: $('#vt-gen-lower').checked, digits: $('#vt-gen-digits').checked, symbols: $('#vt-gen-symbols').checked };
+    const r = await V.generate(opts); lastGen = (r && r.password) || ''; const out = $('#vt-gen-out'); if (out) out.textContent = lastGen;
+  }
+  function openGen() { $('#vt-gen-pop').classList.remove('hidden'); positionPop($('#vt-gen-pop'), $('#vt-gen-open') || btn); genNow(); }
+  function closeGen() { $('#vt-gen-pop').classList.add('hidden'); }
+
+  // ---------------- Autofill-Vermittlung (Webview ↔ Hauptprozess) ----------------
+  async function onWebviewMessage(wv, channel, data) {
+    try {
+      if (channel === 'vault-detect') {
+        if (!data || !data.hasLogin) { try { wv.send('vault-clear'); } catch {} return; }
+        const r = await V.match(data.origin);
+        if (r.ok && r.items && r.items.length) { try { wv.send('vault-offer', { matches: r.items }); } catch {} }
+        else { try { wv.send('vault-clear'); } catch {} }
+      } else if (channel === 'vault-fill-request') {
+        if (!data) return; const r = await V.fill(data.id, data.origin);
+        if (r.ok) { try { wv.send('vault-do-fill', { username: r.username, password: r.password }); } catch {} }
+        else if (r.locked) { toast('Tresor entsperren, um auszufüllen', 'i-warn'); }
+      } else if (channel === 'vault-save-offer') {
+        offerSave(data);
+      }
+    } catch {}
+  }
+  function offerSave(data) {
+    if (!data || !data.password) return;
+    saveOfferData = data;
+    $('#vs-host').textContent = data.title || host(data.url) || data.origin || 'Diese Seite';
+    $('#vs-user').textContent = data.username || '—';
+    $('#vs-pass').textContent = '•'.repeat(Math.min(12, (data.password || '').length || 8));
+    $('#vault-save').classList.remove('hidden');
+  }
+  async function doSave(data) {
+    try { const lr = await V.list(); if (lr.ok) entries = lr.items || []; } catch {}
+    const h = host(data.url || data.origin);
+    const existing = entries.find((e) => host(e.url) === h && (e.username || '') === (data.username || ''));
+    let r;
+    if (existing) r = await V.update(existing.id, { password: data.password, url: data.url || existing.url });
+    else r = await V.add({ title: data.title || h, url: data.url || data.origin, username: data.username, password: data.password });
+    if (r && r.ok) { toast('Im Tresor gespeichert', 'i-check'); if (mode && unlocked) loadList(); }
+    else toast('Speichern fehlgeschlagen', 'i-warn');
+  }
+
+  // ---------------- Live-Countdown bis zur Auto-Sperre ----------------
+  function fmtRemain(ms) { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function tickTimer() {
+    const tx = $('#vt-timer-tx'), pill = $('#vt-timer'); if (!tx || !pill) return;
+    if (!unlocked || !lockAt) { pill.classList.add('hidden'); return; }
+    const rem = lockAt - Date.now();
+    pill.classList.remove('hidden');
+    tx.textContent = fmtRemain(rem);
+    pill.classList.toggle('warn', rem <= 60000);
+    if (rem <= 0) { tx.textContent = '0:00'; }   // der Hauptprozess sperrt jetzt → vault:locked folgt
+  }
+  function startTimer() { if (timerIv) clearInterval(timerIv); tickTimer(); timerIv = setInterval(tickTimer, 1000); }
+  function stopTimer() { if (timerIv) { clearInterval(timerIv); timerIv = null; } const pill = $('#vt-timer'); if (pill) pill.classList.add('hidden'); }
+  function keepalive() { const now = Date.now(); if (now - lastKeep < 18000) return; lastKeep = now; V.keepalive().then((r) => { if (r && r.ok) { lockAt = r.at || 0; } }).catch(() => {}); }
+
+  // ---------------- Verkabelung ----------------
+  $('#vt-lock-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const pw = $('#vt-master').value, msg = $('#vt-lock-msg'), go = $('#vt-lock-go');
+    if (createMode) {
+      if (pw.length < 8) { msg.textContent = 'Mindestens 8 Zeichen.'; return; }
+      if (pw !== $('#vt-master2').value) { msg.textContent = 'Passwörter stimmen nicht überein.'; return; }
+      const r = await V.create(pw);
+      if (!r.ok) { msg.textContent = r.error === 'exists' ? 'Tresor existiert bereits.' : r.error === 'weak' ? 'Zu schwach (min. 8 Zeichen).' : 'Fehler beim Erstellen.'; return; }
+      hasVault = true; unlocked = true; toast('Tresor erstellt & entsperrt', 'i-check'); showScreen();
+    } else {
+      go.disabled = true; go.textContent = 'Entsperre …';
+      const r = await V.unlock(pw);
+      go.disabled = false; go.textContent = 'Entsperren';
+      if (!r.ok) { msg.textContent = r.error === 'wrong' ? 'Falsches Master-Passwort.' : (r.error === 'none' ? 'Kein Tresor vorhanden.' : 'Entsperren fehlgeschlagen.'); stageEl.querySelector('.vt-lock-form').classList.add('vt-shake'); setTimeout(() => stageEl.querySelector('.vt-lock-form').classList.remove('vt-shake'), 500); return; }
+      unlocked = true; toast('Tresor entsperrt', 'i-check'); showScreen();
+      if (pendingSave) { const p = pendingSave; pendingSave = null; await doSave(p); }
+    }
+  });
+  $('#vt-master').addEventListener('input', () => { if (createMode) paintStrength($('#vt-strength-fill'), $('#vt-strength-tx'), $('#vt-master').value); });
+  document.querySelectorAll('.vt-eye').forEach((b) => b.addEventListener('click', () => { const e = $('#' + b.dataset.for); if (!e) return; e.type = e.type === 'password' ? 'text' : 'password'; b.classList.toggle('on', e.type === 'text'); }));
+  $('#vt-search').addEventListener('input', renderList);
+  $('#vt-new').addEventListener('click', () => openEditor(null));
+  $('#vt-ed-back').addEventListener('click', backToList);
+  $('#vt-ed-cancel').addEventListener('click', backToList);
+  $('#vt-ed-save').addEventListener('click', saveEditor);
+  $('#vt-ed-del').addEventListener('click', deleteEntry);
+  $('#vt-f-pass').addEventListener('input', updateMeter);
+  $('#vt-f-gen').addEventListener('click', openGen);
+  $('#vt-gen-open').addEventListener('click', openGen);
+  $('#vt-gen-x').addEventListener('click', closeGen);
+  $('#vt-gen-regen').addEventListener('click', genNow);
+  $('#vt-gen-len').addEventListener('input', () => { $('#vt-gen-lenv').textContent = $('#vt-gen-len').value; genNow(); });
+  ['vt-gen-upper', 'vt-gen-lower', 'vt-gen-digits', 'vt-gen-symbols'].forEach((id) => $('#' + id).addEventListener('change', genNow));
+  $('#vt-gen-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(lastGen); toast('Passwort kopiert', 'i-check'); } catch {} });
+  $('#vt-gen-use').addEventListener('click', () => { if (!$('#vt-editor').classList.contains('hidden')) { $('#vt-f-pass').value = lastGen; updateMeter(); } else { navigator.clipboard.writeText(lastGen).catch(() => {}); toast('Passwort kopiert', 'i-check'); } closeGen(); });
+  $('#vt-editor').querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+    const field = b.dataset.copy;
+    if (editingId) await copyField(editingId, field);
+    else { const v = field === 'password' ? $('#vt-f-pass').value : $('#vt-f-user').value; try { await navigator.clipboard.writeText(v); toast('Kopiert', 'i-check'); } catch {} }
+  }));
+  // Master-Passwort ändern
+  $('#vt-settings').addEventListener('click', () => { $('#vt-md-old').value = ''; $('#vt-md-new').value = ''; $('#vt-md-new2').value = ''; $('#vt-md-msg').textContent = ''; $('#vt-master-dlg').classList.remove('hidden'); });
+  $('#vt-md-x').addEventListener('click', () => $('#vt-master-dlg').classList.add('hidden'));
+  $('#vt-md-cancel').addEventListener('click', () => $('#vt-master-dlg').classList.add('hidden'));
+  $('#vt-md-save').addEventListener('click', async () => {
+    const o = $('#vt-md-old').value, n = $('#vt-md-new').value, n2 = $('#vt-md-new2').value, msg = $('#vt-md-msg');
+    if (n.length < 8) { msg.textContent = 'Neues Passwort: min. 8 Zeichen.'; return; }
+    if (n !== n2) { msg.textContent = 'Neue Passwörter stimmen nicht überein.'; return; }
+    const r = await V.changeMaster(o, n);
+    if (!r.ok) { msg.textContent = r.error === 'wrong' ? 'Aktuelles Passwort falsch.' : 'Änderung fehlgeschlagen.'; return; }
+    $('#vt-master-dlg').classList.add('hidden'); toast('Master-Passwort geändert', 'i-check');
+  });
+  // Speichern-Angebot
+  $('#vs-no').addEventListener('click', () => { $('#vault-save').classList.add('hidden'); saveOfferData = null; });
+  $('#vs-yes').addEventListener('click', async () => {
+    $('#vault-save').classList.add('hidden'); const data = saveOfferData; saveOfferData = null; if (!data) return;
+    const s = await syncStatus();
+    if (s.unlocked) await doSave(data);
+    else { pendingSave = data; toast('Tresor entsperren, um zu speichern', 'i-bolt'); open(); }
+  });
+  // Kopf-Buttons
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  $('#vt-close').addEventListener('click', close);
+  $('#vt-collapse').addEventListener('click', () => setCollapsed(true));
+  $('#vt-side').addEventListener('click', () => setSide(side === 'left' ? 'right' : 'left'));
+  $('#vt-full').addEventListener('click', () => setLayout(layout === 'full' ? 'split' : 'full'));
+  $('#vt-lock').addEventListener('click', async () => { await V.lock(); unlocked = false; showScreen(); toast('Tresor gesperrt', 'i-check'); });
+  const rail = $('#vt-rail'); if (rail) rail.addEventListener('click', () => setCollapsed(false));
+  try { const ro = new ResizeObserver(() => { if (mode) dock(); }); const va = $('#view-area'); if (va) ro.observe(va, { box: 'border-box' }); } catch {}
+  window.addEventListener('resize', () => { if (mode) dock(); });
+  if (V && V.onLocked) V.onLocked(() => { unlocked = false; lockAt = 0; stopTimer(); if (mode) showScreen(); else updateChrome(); });
+  if (V && V.onLockAt) V.onLockAt((d) => { lockAt = (d && d.at) || 0; if (unlocked && mode) startTimer(); });
+  // Aktivität im Tresor-Panel hält ihn wach (setzt die 5-Minuten-Sperre zurück)
+  ['mousemove', 'keydown', 'pointerdown'].forEach((ev) => stageEl.addEventListener(ev, keepalive, { passive: true }));
+
+  return { toggle, open, close, onWebviewMessage };
+})();
+
+/* ============================================================ NOVA Share (Datei-Server-Client: andockbar + Admin) */
+const share = (() => {
+  const stageEl = $('#share-stage'), btn = $('#btn-share');
+  if (!stageEl) return {};
+  const S = window.nova.share;
+  let mode = false, collapsed = false, side = 'right', layout = 'split';
+  let me = null, files = [], tab = 'files', editUserId = null;
+  const splitWidth = () => Math.round(Math.min(940, Math.max(460, window.innerWidth * 0.48)));
+  const fmtBytes = (n) => { n = Number(n) || 0; const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + ' ' + u[i]; };
+
+  // ---------------- Andocken (wie Tresor) ----------------
+  function dock() {
+    const full = layout === 'full' && !collapsed;
+    stageEl.classList.toggle('sh-left', side === 'left' && !full);
+    stageEl.classList.toggle('sh-collapsed', collapsed);
+    stageEl.classList.toggle('sh-fullscreen', full);
+    document.body.classList.toggle('sh-full-cover', full);
+    dockManager.set('share', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+  }
+  function setSide(s) { if (s !== 'left' && s !== 'right') return; side = s; try { state.settings.shareSide = s; window.nova.settings.set({ shareSide: s }); } catch {} dock(); }
+  function setLayout(l) { if (l !== 'split' && l !== 'full') return; layout = l; collapsed = false; const fb = $('#sh-full'); if (fb) fb.classList.toggle('active', l === 'full'); try { state.settings.shareLayout = l; window.nova.settings.set({ shareLayout: l }); } catch {} dock(); }
+  function setCollapsed(on) { collapsed = !!on; const cb = $('#sh-collapse'); if (cb) cb.title = collapsed ? 'Ausklappen' : 'Einklappen'; dock(); }
+  async function open() {
+    mode = true; collapsed = false;
+    if (state.settings && state.settings.shareSide === 'left') side = 'left';
+    if (state.settings && (state.settings.shareLayout === 'full' || state.settings.shareLayout === 'split')) layout = state.settings.shareLayout;
+    const fb = $('#sh-full'); if (fb) fb.classList.toggle('active', layout === 'full');
+    stageEl.classList.remove('hidden', 'closing');
+    document.body.classList.add('sh-open');
+    requestAnimationFrame(dock);
+    if (btn) btn.classList.add('active');
+    await refresh();
+  }
+  function close() {
+    if (!mode) return; mode = false;
+    document.body.classList.remove('sh-full-cover');
+    dockManager.close('share');
+    stageEl.classList.add('closing');
+    setTimeout(() => { stageEl.classList.add('hidden'); stageEl.classList.remove('closing'); document.body.classList.remove('sh-open'); stageEl.style.left = ''; stageEl.style.right = ''; stageEl.style.top = ''; stageEl.style.width = ''; }, 420);
+    if (btn) btn.classList.remove('active');
+  }
+  function toggle() { mode ? close() : open(); }
+  function showSnap(s) {
+    const va = $('#view-area'); if (!va) return; const r = va.getBoundingClientRect(); const w = splitWidth();
+    const sn = $('#sh-snap'); if (!sn) return; sn.classList.remove('hidden');
+    sn.style.top = Math.round(r.top) + 'px'; sn.style.height = Math.round(r.height - 10) + 'px'; sn.style.width = w + 'px';
+    if (s === 'left') { sn.style.left = Math.round(r.left) + 'px'; sn.style.right = 'auto'; } else { sn.style.right = Math.round(window.innerWidth - r.right) + 'px'; sn.style.left = 'auto'; }
+  }
+  const head = $('#sh-head');
+  if (head) head.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('button'))) return;
+    e.preventDefault();
+    const mask = $('#sh-dragmask'); if (mask) mask.classList.remove('hidden');
+    stageEl.classList.add('sh-grab');
+    let curSide = side;
+    const onMove = (ev) => { curSide = ev.clientX < window.innerWidth / 2 ? 'left' : 'right'; showSnap(curSide); };
+    const onUp = () => { if (mask) mask.classList.add('hidden'); stageEl.classList.remove('sh-grab'); const sn = $('#sh-snap'); if (sn) sn.classList.add('hidden'); setLayout('split'); setSide(curSide); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+    showSnap(curSide);
+  });
+
+  // ---------------- Screens ----------------
+  function updateChrome() {
+    const sub = $('#sh-status'); if (sub) sub.textContent = me ? (me.username + (me.role === 'admin' ? ' · Admin' : '')) : 'nicht verbunden';
+    const st = $('#sh-rail-state'); if (st) st.classList.toggle('on', !!me);
+    const lo = $('#sh-logout'); if (lo) lo.classList.toggle('hidden', !me);
+    if (btn) btn.classList.toggle('connected', !!me);
+  }
+  function showScreen() {
+    const login = $('#sh-login'), main = $('#sh-main');
+    if (!me) { login.classList.remove('hidden'); main.classList.add('hidden'); setTimeout(() => { try { ($('#sh-server').value ? $('#sh-user') : $('#sh-server')).focus(); } catch {} }, 80); }
+    else {
+      login.classList.add('hidden'); main.classList.remove('hidden');
+      $('#sh-tab-admin').classList.toggle('hidden', me.role !== 'admin');
+      if (tab === 'admin' && me.role !== 'admin') tab = 'files';
+      selectTab(tab);
+    }
+    updateChrome();
+  }
+  async function refresh() {
+    const c = await S.config();
+    if ($('#sh-server') && c.serverUrl) $('#sh-server').value = c.serverUrl;
+    if (c.loggedIn) { const r = await S.me(); me = r.ok ? r.user : null; } else me = null;
+    showScreen();
+  }
+
+  // ---------------- Dateien ----------------
+  async function loadFiles() {
+    const r = await S.files();
+    if (!r.ok) { if (r.status === 401) { me = null; showScreen(); } return; }
+    files = r.files || []; if (r.me) me = r.me;
+    renderFiles(); updateQuota();
+  }
+  function updateQuota() {
+    const q = $('#sh-quota-fill'), tx = $('#sh-quota-tx'); if (!me || !q) return;
+    const used = me.usedBytes || 0, total = me.quotaBytes || 0, pct = total ? Math.min(100, used / total * 100) : 0;
+    q.style.width = pct + '%'; q.style.background = pct > 90 ? '#ff5c6c' : pct > 70 ? '#ffac4b' : 'linear-gradient(90deg,var(--sh),var(--sh2))';
+    tx.textContent = fmtBytes(used) + ' / ' + fmtBytes(total);
+  }
+  function renderFiles() {
+    const q = ($('#sh-search').value || '').toLowerCase().trim();
+    const list = $('#sh-files'); list.innerHTML = '';
+    const items = files.filter((f) => !q || (f.name + ' ' + (f.ownerName || '')).toLowerCase().includes(q)).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    $('#sh-empty').classList.toggle('hidden', files.length > 0);
+    for (const f of items) {
+      const row = el('div', 'sh-file');
+      const ic = el('span', 'sh-file-ic'); ic.innerHTML = '<svg viewBox="0 0 24 24"><path d="M14 3v5h5"/><path d="M6 3h8l5 5v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/></svg>';
+      const tx = el('div', 'sh-file-tx'); tx.appendChild(el('b', null, f.name)); tx.appendChild(el('span', null, fmtBytes(f.size) + ' · ' + (f.ownerName || '?') + (f.downloads ? ' · ' + f.downloads + '×' : '')));
+      const dl = el('button', 'sh-file-btn'); dl.title = 'Herunterladen'; dl.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v12M7 12l5 5 5-5M5 20h14"/></svg>';
+      dl.addEventListener('click', () => downloadFile(f));
+      row.append(ic, tx, dl);
+      if (f.mine || (me && me.role === 'admin')) { const del = el('button', 'sh-file-btn sh-del'); del.title = 'Löschen'; del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13h10l1-13"/></svg>'; del.addEventListener('click', () => deleteFile(f)); row.appendChild(del); }
+      list.appendChild(row);
+    }
+  }
+  async function downloadFile(f) { toast('Lade „' + f.name + '" …', 'i-download'); const r = await S.download(f.id, f.name); if (r.ok) toast('Heruntergeladen → ' + (r.path || 'Downloads'), 'i-check'); else toast('Download fehlgeschlagen', 'i-warn'); }
+  async function deleteFile(f) { const r = await S.delete(f.id); if (r.ok) { toast('Gelöscht', 'i-check'); loadFiles(); } else toast('Löschen fehlgeschlagen', 'i-warn'); }
+
+  // ---------------- Admin ----------------
+  function toBytes(val, unit) { const n = Math.max(0, Number(val) || 0); return unit === 'GB' ? n * 1073741824 : n * 1048576; }
+  function fromBytes(b) { b = Number(b) || 0; return b >= 1073741824 ? { val: +(b / 1073741824).toFixed(2), unit: 'GB' } : { val: Math.round(b / 1048576), unit: 'MB' }; }
+  async function loadAdmin() {
+    const [u, s] = await Promise.all([S.adminUsers(), S.adminStats()]);
+    const stats = $('#sh-admin-stats');
+    if (s.ok && stats) { stats.innerHTML = ''; const chip = (k, v) => { const c = el('div', 'sh-stat'); c.appendChild(el('b', null, v)); c.appendChild(el('span', null, k)); return c; }; stats.append(chip('Konten', String(s.stats.users)), chip('Dateien', String(s.stats.files)), chip('Gesamt', fmtBytes(s.stats.totalBytes))); }
+    if (u.ok) renderUsers(u.users || []);
+  }
+  function renderUsers(users) {
+    const list = $('#sh-users'); list.innerHTML = '';
+    for (const u of users) {
+      const row = el('div', 'sh-user' + (u.disabled ? ' off' : ''));
+      const av = el('span', 'sh-user-av', (u.username[0] || '?').toUpperCase());
+      const tx = el('div', 'sh-user-tx');
+      const top = el('b', null, u.username); if (u.role === 'admin') { const bdg = el('span', 'sh-badge', 'Admin'); top.appendChild(bdg); }
+      tx.appendChild(top);
+      tx.appendChild(el('span', null, fmtBytes(u.usedBytes) + ' / ' + fmtBytes(u.quotaBytes) + ' · max ' + fmtBytes(u.maxFileBytes) + (u.disabled ? ' · gesperrt' : '')));
+      const edit = el('button', 'sh-file-btn'); edit.title = 'Bearbeiten'; edit.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>'; edit.addEventListener('click', () => openUserDlg(u));
+      const dis = el('button', 'sh-file-btn'); dis.title = u.disabled ? 'Entsperren' : 'Sperren'; dis.innerHTML = u.disabled ? '<svg viewBox="0 0 24 24"><path d="M7 11V8a5 5 0 0 1 9.9-1"/><rect x="5" y="11" width="14" height="9" rx="2"/></svg>' : '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+      dis.addEventListener('click', async () => { const r = await S.adminUpdate(u.id, { disabled: !u.disabled }); if (r.ok) loadAdmin(); else toast('Fehler', 'i-warn'); });
+      const del = el('button', 'sh-file-btn sh-del'); del.title = 'Löschen'; del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M6 7l1 13h10l1-13"/></svg>';
+      del.addEventListener('click', async () => { const r = await S.adminDelete(u.id); if (r.ok) { toast('Konto gelöscht', 'i-check'); loadAdmin(); } else toast(r.error === 'self' ? 'Eigenes Konto nicht löschbar' : 'Fehler', 'i-warn'); });
+      row.append(av, tx, edit, dis, del);
+      list.appendChild(row);
+    }
+  }
+  function openUserDlg(u) {
+    editUserId = u ? u.id : null;
+    $('#sh-ud-title').textContent = u ? ('Konto: ' + u.username) : 'Konto anlegen';
+    $('#sh-ud-user').value = u ? u.username : ''; $('#sh-ud-user').disabled = !!u;
+    $('#sh-ud-pass').value = ''; $('#sh-ud-pass').placeholder = u ? 'Neues Passwort (leer = unverändert)' : 'Passwort (min. 8 Zeichen)';
+    const q = fromBytes(u ? u.quotaBytes : 2147483648), m = fromBytes(u ? u.maxFileBytes : 536870912);
+    $('#sh-ud-quota').value = q.val; $('#sh-ud-quota-unit').value = q.unit;
+    $('#sh-ud-max').value = m.val; $('#sh-ud-max-unit').value = m.unit;
+    $('#sh-ud-admin').checked = u ? u.role === 'admin' : false;
+    $('#sh-ud-msg').textContent = '';
+    $('#sh-user-dlg').classList.remove('hidden');
+  }
+  async function saveUserDlg() {
+    const msg = $('#sh-ud-msg');
+    const quota = toBytes($('#sh-ud-quota').value, $('#sh-ud-quota-unit').value);
+    const maxFile = toBytes($('#sh-ud-max').value, $('#sh-ud-max-unit').value);
+    const isAdmin = $('#sh-ud-admin').checked;
+    const pass = $('#sh-ud-pass').value;
+    if (editUserId) {
+      const patch = { role: isAdmin ? 'admin' : 'user', quotaBytes: quota, maxFileBytes: maxFile };
+      if (pass) { if (pass.length < 8) { msg.textContent = 'Passwort min. 8 Zeichen.'; return; } patch.password = pass; }
+      const r = await S.adminUpdate(editUserId, patch);
+      if (!r.ok) { msg.textContent = 'Änderung fehlgeschlagen.'; return; }
+    } else {
+      const username = $('#sh-ud-user').value.trim();
+      if (!/^[a-zA-Z0-9._-]{3,32}$/.test(username)) { msg.textContent = 'Benutzername: 3–32 Zeichen (a–z, 0–9, . _ -).'; return; }
+      if (pass.length < 8) { msg.textContent = 'Passwort min. 8 Zeichen.'; return; }
+      const r = await S.adminCreate({ username, password: pass, role: isAdmin ? 'admin' : 'user', quotaBytes: quota, maxFileBytes: maxFile });
+      if (!r.ok) { msg.textContent = r.error === 'exists' ? 'Benutzername existiert bereits.' : 'Anlegen fehlgeschlagen.'; return; }
+    }
+    $('#sh-user-dlg').classList.add('hidden'); toast('Gespeichert', 'i-check'); loadAdmin();
+  }
+
+  function selectTab(t) {
+    tab = t;
+    document.querySelectorAll('.sh-tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
+    $('#sh-pane-files').classList.toggle('hidden', t !== 'files');
+    $('#sh-pane-admin').classList.toggle('hidden', t !== 'admin');
+    if (t === 'files') loadFiles(); else loadAdmin();
+  }
+
+  // ---------------- Verkabelung ----------------
+  $('#sh-login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const url = $('#sh-server').value.trim(), username = $('#sh-user').value.trim(), password = $('#sh-pass').value, msg = $('#sh-login-msg'), go = $('#sh-login-go');
+    if (!url) { msg.textContent = 'Bitte Server-Adresse eingeben.'; return; }
+    if (!/^https?:\/\//i.test(url)) { msg.textContent = 'Adresse muss mit http:// oder https:// beginnen.'; return; }
+    go.disabled = true; go.textContent = 'Verbinde …';
+    await S.setServer(url);
+    const r = await S.login({ username, password });
+    go.disabled = false; go.textContent = 'Anmelden';
+    if (!r.ok) { msg.textContent = r.error === 'bad_credentials' ? 'Benutzername oder Passwort falsch.' : r.error === 'too_many' ? 'Zu viele Versuche — kurz warten.' : r.error === 'network' || r.error === 'no_server' ? 'Server nicht erreichbar.' : 'Anmeldung fehlgeschlagen.'; return; }
+    me = r.user; $('#sh-pass').value = ''; toast('Mit Server verbunden', 'i-check'); showScreen();
+  });
+  document.querySelectorAll('#share-stage .sh-eye').forEach((b) => b.addEventListener('click', () => { const e = $('#' + b.dataset.for); if (!e) return; e.type = e.type === 'password' ? 'text' : 'password'; b.classList.toggle('on', e.type === 'text'); }));
+  document.querySelectorAll('.sh-tab').forEach((b) => b.addEventListener('click', () => selectTab(b.dataset.tab)));
+  $('#sh-search').addEventListener('input', renderFiles);
+  $('#sh-refresh').addEventListener('click', loadFiles);
+  $('#sh-upload').addEventListener('click', async () => { const r = await S.upload(); if (r && r.ok) loadFiles(); else if (r && !r.canceled) toast('Upload fehlgeschlagen', 'i-warn'); });
+  $('#sh-user-new').addEventListener('click', () => openUserDlg(null));
+  $('#sh-ud-x').addEventListener('click', () => $('#sh-user-dlg').classList.add('hidden'));
+  $('#sh-ud-cancel').addEventListener('click', () => $('#sh-user-dlg').classList.add('hidden'));
+  $('#sh-ud-save').addEventListener('click', saveUserDlg);
+  if (S.onProgress) S.onProgress((p) => {
+    const box = $('#sh-progress'), fill = $('#sh-prog-fill'), tx = $('#sh-prog-tx'); if (!box) return;
+    if (p.done) { fill.style.width = '100%'; tx.textContent = (p.down ? 'Download' : 'Upload') + (p.ok ? ' fertig ✓' : ' fehlgeschlagen'); setTimeout(() => box.classList.add('hidden'), 1300); return; }
+    box.classList.remove('hidden'); const pct = p.total ? Math.round(p.sent / p.total * 100) : 0; fill.style.width = pct + '%'; tx.textContent = (p.down ? '⬇ ' : '⬆ ') + (p.name || '') + ' · ' + pct + '%';
+  });
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  $('#sh-close').addEventListener('click', close);
+  $('#sh-collapse').addEventListener('click', () => setCollapsed(true));
+  $('#sh-side').addEventListener('click', () => setSide(side === 'left' ? 'right' : 'left'));
+  $('#sh-full').addEventListener('click', () => setLayout(layout === 'full' ? 'split' : 'full'));
+  $('#sh-logout').addEventListener('click', async () => { await S.logout(); me = null; showScreen(); toast('Abgemeldet', 'i-check'); });
+  const rail = $('#sh-rail'); if (rail) rail.addEventListener('click', () => setCollapsed(false));
+  try { const ro = new ResizeObserver(() => { if (mode) dock(); }); const va = $('#view-area'); if (va) ro.observe(va, { box: 'border-box' }); } catch {}
+  window.addEventListener('resize', () => { if (mode) dock(); });
+
+  return { toggle, open, close };
+})();
+
+/* ============================================================ Google-Login (echtes Fenster → Sitzungs-Import) */
+if (window.nova.google && window.nova.google.onStatus) {
+  window.nova.google.onStatus((s) => {
+    const st = s && s.state;
+    if (st === 'opening') toast('Google-Login öffnet sich in einem sicheren Fenster …', 'i-bolt');
+    else if (st === 'waiting') toast('Im geöffneten Fenster bei Google anmelden …', 'i-bolt');
+    else if (st === 'done') {
+      toast('Bei Google angemeldet ✓ — Seiten werden neu geladen', 'i-check');
+      try { activeTab()?.wv.reload(); } catch {}
+      try { document.querySelectorAll('#music-panel webview').forEach((w) => { try { w.reload(); } catch {} }); } catch {}
+    }
+    else if (st === 'timeout') toast('Google-Login abgebrochen (Zeitüberschreitung)', 'i-warn');
+    else if (st === 'busy') toast('Login-Fenster ist bereits offen', 'i-warn');
+    else if (st === 'error') toast('Google-Login: ' + ((s && s.msg) || 'Fehler'), 'i-warn');
+  });
+}
 
 /* ============================================================ init */
 (async function init() {

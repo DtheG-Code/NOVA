@@ -1,0 +1,2 @@
+# Shell-Skripte immer mit LF (sonst scheitern sie auf Linux mit "bad interpreter")
+*.sh text eol=lf
