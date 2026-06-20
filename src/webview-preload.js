@@ -455,7 +455,9 @@ if (location.protocol === 'nova:') {
 
     // --- Rechtsklick / Markieren / Kopieren erzwingen ---
     if (nat.unblock) {
-      ['contextmenu', 'copy', 'cut', 'selectstart', 'dragstart', 'mousedown', 'mouseup'].forEach((ev) => {
+      // NICHT mousedown/mouseup abfangen — das bricht die Klick-Logik vieler Seiten (z. B. WhatsApp/Discord
+      // reagieren auf mousedown). Nur die Sperren für Rechtsklick/Markieren/Kopieren neutralisieren.
+      ['contextmenu', 'copy', 'cut', 'selectstart', 'dragstart'].forEach((ev) => {
         document.addEventListener(ev, (e) => { e.stopImmediatePropagation(); }, true);
       });
       addStyle('*{user-select:text !important;-webkit-user-select:text !important;-webkit-touch-callout:default !important}');
