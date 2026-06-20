@@ -130,6 +130,26 @@ if (location.protocol === 'nova:') {
   }
 
   // ------------------------------------------------------------------
+  // NOVA WhatsApp: Status auslesen (Ungelesen-Anzahl + im Anruf?) und an den Host melden,
+  // damit die eingeklappte Rand-Leiste das anzeigt. Ungelesen kommt zuverlässig aus dem Titel „(N) WhatsApp".
+  // ------------------------------------------------------------------
+  if (/(^|\.)whatsapp\.com$/.test(location.hostname)) {
+    let last = '';
+    const readWa = () => {
+      let unread = 0, inCall = false;
+      try {
+        const m = (document.title || '').match(/\((\d+)\)/);
+        if (m) unread = parseInt(m[1], 10) || 0;
+        inCall = !!document.querySelector('[data-testid="call-screen"], [data-testid*="callscreen"], [data-testid*="call-screen"], [aria-label*="Anruf läuft" i], [aria-label*="ongoing call" i], [aria-label*="Auflegen" i], [aria-label*="End call" i]');
+      } catch (e) {}
+      const j = unread + '|' + inCall;
+      if (j !== last) { last = j; try { ipcRenderer.sendToHost('whatsapp-status', { unread, inCall }); } catch (e) {} }
+    };
+    setInterval(readWa, 2500);
+    setTimeout(readWa, 1500);
+  }
+
+  // ------------------------------------------------------------------
   // NOVA Vault — Login-Felder erkennen + animiert ausfüllen.
   // Inline-Chip in einem GESCHLOSSENEN Shadow-DOM (von der Seite weder lesbar noch stylebar).
   // Passwörter kommen erst auf Klick vom Hauptprozess und werden hier nur ins Feld getippt.

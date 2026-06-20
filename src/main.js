@@ -843,6 +843,27 @@ async function googleLoginViaBrowser() {
 }
 ipcMain.handle('google:login', () => { googleLoginViaBrowser(); return { ok: true }; });
 
+// ---- Gemeinsame Bildschirmfreigabe (Discord + WhatsApp): Quellen sammeln → Auswahl im Renderer → zurück an die Seite ----
+let screenPickCb = null;
+const screenSources = new Map();
+function attachScreenShare(ses) {
+  ses.setDisplayMediaRequestHandler((_req, callback) => {
+    screenPickCb = callback; screenSources.clear();
+    desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true }).then((sources) => {
+      const list = sources.map((s) => { screenSources.set(s.id, s); return { id: s.id, name: s.name, thumb: (s.thumbnail && s.thumbnail.toDataURL()) || '', icon: (s.appIcon && s.appIcon.toDataURL && s.appIcon.toDataURL()) || '' }; });
+      broadcast('screen:sources', list);
+    }).catch(() => { try { callback(); } catch {} screenPickCb = null; });
+  }, { useSystemPicker: false });
+}
+ipcMain.on('screen:pick', (_e, payload) => {
+  if (!screenPickCb) return;
+  const id = payload && typeof payload === 'object' ? payload.id : payload;
+  const wantAudio = !(payload && typeof payload === 'object' && payload.audio === false);
+  const src = id && screenSources.get(id);
+  try { if (src) screenPickCb(wantAudio ? { video: src, audio: 'loopback' } : { video: src }); else screenPickCb(); } catch {}
+  screenPickCb = null; screenSources.clear();
+});
+
 // ---------------------------------------------------------------- web contents wiring
 app.on('web-contents-created', (_e, contents) => {
   // Electron hängt pro <webview> intern Listener an WebContents — bei vielen
@@ -1154,24 +1175,15 @@ app.whenReady().then(async () => {
   discordSes.setPermissionRequestHandler((_wc, permission, cb) => { cb(discordPerms.includes(permission)); });
   discordSes.setPermissionCheckHandler((_wc, permission) => discordPerms.includes(permission));
   cleanClientHints(discordSes);
-  // Bildschirmfreigabe: Quellen sammeln → Auswahl im Renderer → zurück an Discord
-  let discordPickCb = null;
-  const discordSources = new Map();
-  discordSes.setDisplayMediaRequestHandler((_req, callback) => {
-    discordPickCb = callback; discordSources.clear();
-    desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true }).then((sources) => {
-      const list = sources.map((s) => { discordSources.set(s.id, s); return { id: s.id, name: s.name, thumb: (s.thumbnail && s.thumbnail.toDataURL()) || '', icon: (s.appIcon && s.appIcon.toDataURL && s.appIcon.toDataURL()) || '' }; });
-      broadcast('discord:screen-sources', list);
-    }).catch(() => { try { callback(); } catch {} discordPickCb = null; });
-  }, { useSystemPicker: false });
-  ipcMain.on('discord:screen-pick', (_e, payload) => {
-    if (!discordPickCb) return;
-    const id = payload && typeof payload === 'object' ? payload.id : payload;
-    const wantAudio = !(payload && typeof payload === 'object' && payload.audio === false);
-    const src = id && discordSources.get(id);
-    try { if (src) discordPickCb(wantAudio ? { video: src, audio: 'loopback' } : { video: src }); else discordPickCb(); } catch {}
-    discordPickCb = null; discordSources.clear();
-  });
+  attachScreenShare(discordSes);   // Bildschirmfreigabe über den gemeinsamen Picker
+
+  // ---- NOVA WhatsApp: eigene Session (QR-Login bleibt erhalten, kein Adblock). Medien für Sprach-/Videoanrufe + Screen-Share. ----
+  const whatsappSes = session.fromPartition('persist:nova-whatsapp');
+  whatsappSes.setUserAgent(chromeUA);
+  whatsappSes.setPermissionRequestHandler((_wc, permission, cb) => { cb(discordPerms.includes(permission)); });
+  whatsappSes.setPermissionCheckHandler((_wc, permission) => discordPerms.includes(permission));
+  cleanClientHints(whatsappSes);
+  attachScreenShare(whatsappSes);
 
   setupDownloads();
   createWindow();

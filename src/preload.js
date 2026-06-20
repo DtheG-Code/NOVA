@@ -115,9 +115,9 @@ contextBridge.exposeInMainWorld('nova', {
     onStatus: on('google:login-status'),
   },
 
-  discord: {
-    onScreenSources: on('discord:screen-sources'),
-    pickScreen: send('discord:screen-pick'),
+  screen: {   // gemeinsame Bildschirmfreigabe (Discord + WhatsApp)
+    onSources: on('screen:sources'),
+    pick: send('screen:pick'),
   },
 
   vault: {

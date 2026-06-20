@@ -5452,6 +5452,7 @@ const teEdit = (() => {
     ['studio', '#btn-studio', 'NOVA Studio'],
     ['shifter', '#btn-shifter', 'Shifter'],
     ['discord', '#btn-discord', 'Discord'],
+    ['whatsapp', '#btn-whatsapp', 'WhatsApp'],
   ];
   let openFlag = false;
   let extList = [];   // aktuell geladene Erweiterungs-Actions (von extActions gesetzt)
@@ -6323,12 +6324,12 @@ const discord = (() => {
       grid.appendChild(it);
     });
   }
-  if (window.nova.discord && window.nova.discord.onScreenSources) {
-    window.nova.discord.onScreenSources((list) => { pickSources = list || []; pickKind = 'screen'; pickSel = null; showPicker(); });
+  if (window.nova.screen && window.nova.screen.onSources) {
+    window.nova.screen.onSources((list) => { pickSources = list || []; pickKind = 'screen'; pickSel = null; showPicker(); });
   }
   document.querySelectorAll('.dc-sp-tab').forEach((t) => t.addEventListener('click', () => { pickKind = t.dataset.kind; pickSel = null; const sh = $('#dc-sp-share'); if (sh) sh.disabled = true; renderTabs(); renderGrid(); }));
-  const spCancel = $('#dc-sp-cancel'); if (spCancel) spCancel.addEventListener('click', () => { try { window.nova.discord.pickScreen(null); } catch {} hidePicker(); });
-  const spShare = $('#dc-sp-share'); if (spShare) spShare.addEventListener('click', () => { if (!pickSel) return; const audio = !!($('#dc-sp-audio') && $('#dc-sp-audio').checked); try { window.nova.discord.pickScreen({ id: pickSel, audio }); } catch {} hidePicker(); });
+  const spCancel = $('#dc-sp-cancel'); if (spCancel) spCancel.addEventListener('click', () => { try { window.nova.screen.pick(null); } catch {} hidePicker(); });
+  const spShare = $('#dc-sp-share'); if (spShare) spShare.addEventListener('click', () => { if (!pickSel) return; const audio = !!($('#dc-sp-audio') && $('#dc-sp-audio').checked); try { window.nova.screen.pick({ id: pickSel, audio }); } catch {} hidePicker(); });
 
   // ---- Buttons + Layout-Tracking ----
   if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
@@ -6338,6 +6339,101 @@ const discord = (() => {
   const bFull = $('#dc-full'); if (bFull) bFull.addEventListener('click', () => setLayout(layout === 'full' ? 'split' : 'full'));
   const bReload = $('#dc-reload'); if (bReload) bReload.addEventListener('click', () => { try { wv && wv.reload(); } catch {} });
   const rail = $('#dc-rail'); if (rail) rail.addEventListener('click', () => setCollapsed(false));
+  try { const ro = new ResizeObserver(() => { if (mode) dock(); }); const va = $('#view-area'); if (va) ro.observe(va, { box: 'border-box' }); } catch {}
+  window.addEventListener('resize', () => { if (mode) dock(); });
+
+  return { toggle, open, close };
+})();
+
+/* ============================================================ NOVA WhatsApp (andockbare Bühne wie Discord: Anrufe, Ungelesen-/Anruf-Status, Screen-Share) */
+const whatsapp = (() => {
+  const stageEl = $('#whatsapp-stage'), btn = $('#btn-whatsapp');
+  if (!stageEl) return { toggle() {} };
+  let wv = null, mode = false, collapsed = false, side = 'right', layout = 'split';
+  const splitWidth = () => Math.round(Math.min(860, Math.max(420, window.innerWidth * 0.44)));
+
+  function ensureWv() {
+    if (wv) return wv;
+    wv = document.createElement('webview');
+    wv.setAttribute('partition', 'persist:nova-whatsapp');
+    wv.setAttribute('allowpopups', '');
+    if (state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
+    wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
+    wv.setAttribute('src', 'https://web.whatsapp.com');
+    wv.addEventListener('ipc-message', (e) => { if (e.channel === 'whatsapp-status') updateStatus(e.args && e.args[0]); });
+    $('#wa-viewport').appendChild(wv);
+    return wv;
+  }
+  function dock() {
+    const full = layout === 'full' && !collapsed;
+    stageEl.classList.toggle('wa-left', side === 'left' && !full);
+    stageEl.classList.toggle('wa-collapsed', collapsed);
+    stageEl.classList.toggle('wa-fullscreen', full);
+    dockManager.set('whatsapp', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+  }
+  function setLayout(l) { if (l !== 'split' && l !== 'full') return; layout = l; collapsed = false; const fb = $('#wa-full'); if (fb) fb.classList.toggle('active', l === 'full'); try { state.settings.whatsappLayout = l; window.nova.settings.set({ whatsappLayout: l }); } catch {} dock(); }
+  function setSide(s) { if (s !== 'left' && s !== 'right') return; side = s; try { state.settings.whatsappSide = s; window.nova.settings.set({ whatsappSide: s }); } catch {} dock(); }
+  function setCollapsed(on) { collapsed = !!on; const cb = $('#wa-collapse'); if (cb) cb.title = collapsed ? 'Ausklappen' : 'Einklappen'; dock(); }
+  function open() {
+    ensureWv(); mode = true; collapsed = false;
+    if (state.settings && state.settings.whatsappSide === 'left') side = 'left';
+    if (state.settings && (state.settings.whatsappLayout === 'full' || state.settings.whatsappLayout === 'split')) layout = state.settings.whatsappLayout;
+    const fb = $('#wa-full'); if (fb) fb.classList.toggle('active', layout === 'full');
+    stageEl.classList.remove('hidden', 'closing');
+    document.body.classList.add('wa-open');
+    requestAnimationFrame(dock);
+    if (btn) btn.classList.add('active');
+  }
+  function close() {
+    if (!mode) return; mode = false;
+    dockManager.close('whatsapp');
+    stageEl.classList.add('closing');
+    setTimeout(() => { stageEl.classList.add('hidden'); stageEl.classList.remove('closing'); document.body.classList.remove('wa-open'); stageEl.style.left = ''; stageEl.style.right = ''; stageEl.style.top = ''; stageEl.style.width = ''; }, 420);
+    if (btn) btn.classList.remove('active');
+  }
+  function toggle() { mode ? close() : open(); }
+
+  function updateStatus(info) {
+    info = info || {};
+    const unread = Math.max(0, parseInt(info.unread, 10) || 0);
+    const inCall = !!info.inCall;
+    const lbl = unread > 99 ? '99+' : String(unread);
+    const ru = $('#wa-rail-unread'); if (ru) { ru.classList.toggle('hidden', unread <= 0); ru.textContent = lbl; }
+    const rc = $('#wa-rail-call'); if (rc) rc.classList.toggle('hidden', !inCall);
+    const chip = $('#wa-callchip'); if (chip) chip.classList.toggle('hidden', !inCall);
+    const sub = $('#wa-sub'); if (sub) sub.textContent = inCall ? 'im Anruf' : (unread > 0 ? unread + ' ungelesen' : 'in NOVA');
+    if (btn) btn.classList.toggle('in-call', inCall);
+    const badge = $('#wa-badge'); if (badge) { badge.classList.toggle('hidden', unread <= 0); badge.textContent = lbl; }
+  }
+
+  // ---- Ziehen zum Andocken (links/rechts) ----
+  function showSnap(s) {
+    const va = $('#view-area'); if (!va) return; const r = va.getBoundingClientRect(); const w = splitWidth();
+    const sn = $('#wa-snap'); if (!sn) return; sn.classList.remove('hidden');
+    sn.style.top = Math.round(r.top) + 'px'; sn.style.height = Math.round(r.height - 10) + 'px'; sn.style.width = w + 'px';
+    if (s === 'left') { sn.style.left = Math.round(r.left) + 'px'; sn.style.right = 'auto'; } else { sn.style.right = Math.round(window.innerWidth - r.right) + 'px'; sn.style.left = 'auto'; }
+  }
+  const head = $('#wa-head');
+  if (head) head.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('button'))) return;
+    e.preventDefault();
+    const mask = $('#wa-dragmask'); if (mask) mask.classList.remove('hidden');
+    stageEl.classList.add('wa-grab');
+    let curSide = side;
+    const onMove = (ev) => { curSide = ev.clientX < window.innerWidth / 2 ? 'left' : 'right'; showSnap(curSide); };
+    const onUp = () => { if (mask) mask.classList.add('hidden'); stageEl.classList.remove('wa-grab'); const sn = $('#wa-snap'); if (sn) sn.classList.add('hidden'); setLayout('split'); setSide(curSide); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+    showSnap(curSide);
+  });
+
+  // ---- Buttons + Layout-Tracking ----
+  if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  const bClose = $('#wa-close'); if (bClose) bClose.addEventListener('click', close);
+  const bColl = $('#wa-collapse'); if (bColl) bColl.addEventListener('click', () => setCollapsed(true));
+  const bSide = $('#wa-side'); if (bSide) bSide.addEventListener('click', () => setSide(side === 'left' ? 'right' : 'left'));
+  const bFull = $('#wa-full'); if (bFull) bFull.addEventListener('click', () => setLayout(layout === 'full' ? 'split' : 'full'));
+  const bReload = $('#wa-reload'); if (bReload) bReload.addEventListener('click', () => { try { wv && wv.reload(); } catch {} });
+  const rail = $('#wa-rail'); if (rail) rail.addEventListener('click', () => setCollapsed(false));
   try { const ro = new ResizeObserver(() => { if (mode) dock(); }); const va = $('#view-area'); if (va) ro.observe(va, { box: 'border-box' }); } catch {}
   window.addEventListener('resize', () => { if (mode) dock(); });
 

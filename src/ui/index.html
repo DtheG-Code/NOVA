@@ -221,6 +221,7 @@
         <button class="icon-btn" id="btn-studio" title="NOVA Studio — isolierte Windows-VM"><svg class="ic" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg></button>
         <button class="icon-btn" id="btn-shifter" title="Shifter — hält den PC wach"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.4"/><path class="sh-arc" d="M7.8 7.8a6 6 0 0 0 0 8.4"/><path class="sh-arc" d="M16.2 7.8a6 6 0 0 1 0 8.4"/></svg></button>
         <button class="icon-btn" id="btn-discord" title="Discord — in NOVA"><svg class="ic dc-ico" viewBox="0 0 24 24"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.036A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg></button>
+        <button class="icon-btn" id="btn-whatsapp" title="WhatsApp — in NOVA"><svg class="ic wa-ico" viewBox="0 0 24 24"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 2.1.55 4.06 1.6 5.78L2 22l4.45-1.17a9.9 9.9 0 0 0 5.59 1.7h.01c5.46 0 9.91-4.45 9.91-9.91C22 6.45 17.5 2 12.04 2zm5.8 14.13c-.24.68-1.4 1.3-1.95 1.38-.5.07-1.13.1-1.82-.11-.42-.13-.96-.31-1.65-.61-2.9-1.25-4.8-4.17-4.94-4.36-.15-.19-1.18-1.57-1.18-3 0-1.42.75-2.12 1.01-2.41.27-.29.58-.36.78-.36.19 0 .39 0 .56.01.18.01.42-.07.66.5.24.59.82 2.04.89 2.19.07.15.12.32.02.51-.1.19-.15.31-.29.48-.15.17-.31.38-.44.51-.15.15-.3.31-.13.6.17.29.76 1.25 1.63 2.03 1.12 1 2.07 1.31 2.36 1.46.29.15.46.12.63-.07.17-.19.73-.85.92-1.14.19-.29.39-.24.66-.15.27.1 1.71.81 2 .96.29.15.49.22.56.34.07.12.07.69-.17 1.37z"/></svg><span class="wa-badge hidden" id="wa-badge"></span></button>
         <button class="icon-btn" id="btn-vault" title="NOVA Tresor — Passwort-Manager"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3l8 3v5c0 4.6-3.4 8-8 9.4C7.4 20 4 16.6 4 12V6z"/><path d="M9.5 12l1.8 1.8L15 9.8"/></svg></button>
         <button class="icon-btn" id="btn-share" title="NOVA Share — Datei-Server"><svg class="ic" viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.7-7.94 5 5 0 0 1 9.58-1.6A3.5 3.5 0 0 1 17.5 18z"/><path d="M12 17v-6M9.5 13l2.5-2.5L14.5 13"/></svg></button>
         <button class="icon-btn" id="btn-edit-topbar" title="Topbar anpassen"><svg class="ic"><use href="#i-sliders"/></svg></button>
@@ -583,6 +584,39 @@
     </div>
   </div>
 </div>
+
+<!-- ===================== NOVA WHATSAPP ===================== -->
+<div id="whatsapp-stage" class="wa-stage hidden" aria-hidden="true">
+  <div class="wa-aura"></div>
+  <div class="wa-rail" id="wa-rail" title="WhatsApp ausklappen">
+    <span class="wa-rail-logo"><svg class="wa-ico" viewBox="0 0 24 24"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 2.1.55 4.06 1.6 5.78L2 22l4.45-1.17a9.9 9.9 0 0 0 5.59 1.7h.01c5.46 0 9.91-4.45 9.91-9.91C22 6.45 17.5 2 12.04 2zm5.8 14.13c-.24.68-1.4 1.3-1.95 1.38-.5.07-1.13.1-1.82-.11-.42-.13-.96-.31-1.65-.61-2.9-1.25-4.8-4.17-4.94-4.36-.15-.19-1.18-1.57-1.18-3 0-1.42.75-2.12 1.01-2.41.27-.29.58-.36.78-.36.19 0 .39 0 .56.01.18.01.42-.07.66.5.24.59.82 2.04.89 2.19.07.15.12.32.02.51-.1.19-.15.31-.29.48-.15.17-.31.38-.44.51-.15.15-.3.31-.13.6.17.29.76 1.25 1.63 2.03 1.12 1 2.07 1.31 2.36 1.46.29.15.46.12.63-.07.17-.19.73-.85.92-1.14.19-.29.39-.24.66-.15.27.1 1.71.81 2 .96.29.15.49.22.56.34.07.12.07.69-.17 1.37z"/></svg></span>
+    <span class="wa-rail-label">WHATSAPP</span>
+    <div class="wa-rail-status">
+      <span class="wa-rail-unread hidden" id="wa-rail-unread">0</span>
+      <span class="wa-rail-call hidden" id="wa-rail-call"><i></i>IM&nbsp;ANRUF</span>
+    </div>
+    <span class="wa-rail-exp"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></span>
+  </div>
+  <div class="wa-frame">
+    <div class="wa-head" id="wa-head" title="Ziehen zum Andocken (links/rechts)">
+      <div class="wa-id">
+        <span class="wa-logo"><svg class="wa-ico" viewBox="0 0 24 24"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 2.1.55 4.06 1.6 5.78L2 22l4.45-1.17a9.9 9.9 0 0 0 5.59 1.7h.01c5.46 0 9.91-4.45 9.91-9.91C22 6.45 17.5 2 12.04 2zm5.8 14.13c-.24.68-1.4 1.3-1.95 1.38-.5.07-1.13.1-1.82-.11-.42-.13-.96-.31-1.65-.61-2.9-1.25-4.8-4.17-4.94-4.36-.15-.19-1.18-1.57-1.18-3 0-1.42.75-2.12 1.01-2.41.27-.29.58-.36.78-.36.19 0 .39 0 .56.01.18.01.42-.07.66.5.24.59.82 2.04.89 2.19.07.15.12.32.02.51-.1.19-.15.31-.29.48-.15.17-.31.38-.44.51-.15.15-.3.31-.13.6.17.29.76 1.25 1.63 2.03 1.12 1 2.07 1.31 2.36 1.46.29.15.46.12.63-.07.17-.19.73-.85.92-1.14.19-.29.39-.24.66-.15.27.1 1.71.81 2 .96.29.15.49.22.56.34.07.12.07.69-.17 1.37z"/></svg></span>
+        <div class="wa-id-tx"><b>WhatsApp</b><span id="wa-sub">in NOVA</span></div>
+      </div>
+      <div class="wa-callchip hidden" id="wa-callchip"><span class="wa-dot"></span><span>im Anruf</span></div>
+      <div class="wa-headbtns">
+        <button id="wa-side" class="wa-headbtn" title="Seite wechseln (links/rechts)"><svg viewBox="0 0 24 24"><path d="M9 4v16M4 7l-2 2 2 2M20 7l2 2-2 2"/></svg></button>
+        <button id="wa-full" class="wa-headbtn" title="Vollbild ein/aus"><svg class="wa-ic-full" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg><svg class="wa-ic-min" viewBox="0 0 24 24"><path d="M4 8h3a1 1 0 0 0 1-1V4M20 8h-3a1 1 0 0 1-1-1V4M4 16h3a1 1 0 0 1 1 1v3M20 16h-3a1 1 0 0 0-1 1v3"/></svg></button>
+        <button id="wa-reload" class="wa-headbtn" title="Neu laden"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></button>
+        <button id="wa-collapse" class="wa-headbtn" title="Einklappen"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button id="wa-close" class="wa-headbtn wa-x" title="Schließen"><svg class="ic"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+    <div class="wa-viewport" id="wa-viewport"><!-- WhatsApp-Webview wird hier eingefügt --></div>
+  </div>
+</div>
+<div id="wa-dragmask" class="dc-dragmask hidden"></div>
+<div id="wa-snap" class="dc-snap hidden"></div>
 
 <!-- ===================== NOVA TRESOR (Passwort-Manager) ===================== -->
 <div id="vault-stage" class="vault-stage hidden" aria-hidden="true">
