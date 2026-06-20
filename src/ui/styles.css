@@ -3145,6 +3145,9 @@ body.wa-open #view-area { transition: padding 0.42s var(--spring); }
    (Inhalt↔Rail = Rail↔Rail = COLLAPSED_GAP, gleichmäßig) */
 .agent-stage.as-collapsed, .dc-stage.dc-collapsed, .vault-stage.vt-collapsed,
 .share-stage.sh-collapsed, .wa-stage.wa-collapsed { padding-left: 0; padding-right: 0; }
+
+/* NOVA Sound: während des Breiten-Ziehens das Musik-Webview die Maus NICHT schlucken lassen → Verkleinern bleibt smooth */
+.ms-resizing webview { pointer-events: none !important; }
 #as-ask-input { height: 40px; padding: 0 13px; border-radius: 11px; background: rgba(0,0,0,0.35); border: 1px solid var(--border-2); color: var(--text); font-size: 14px; }
 #as-ask-input:focus { outline: none; border-color: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
 .as-ask-row { display: flex; justify-content: flex-end; gap: 9px; }

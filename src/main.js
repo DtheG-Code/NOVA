@@ -17,6 +17,11 @@ const { execFile, spawn } = require('node:child_process');
 const { JsonStore } = require('./store');
 const { importEdgeBookmarks } = require('./edge-import');
 
+// Googles browser-natives Login (FedCM) ist im eingebetteten Webview instabil und ließ NOVA beim „Anmelden"
+// (z. B. YouTube Music) abstürzen. Deaktivieren → Google fällt auf den klassischen Redirect/Popup-Login zurück,
+// den wir sauber über den Echtbrowser umleiten. Muss VOR app.whenReady gesetzt werden.
+try { app.commandLine.appendSwitch('disable-features', 'FedCm,FedCmWithoutWellKnownEnforcement,FedCmButtonMode,FedCmIdpSigninStatus,FedCmMultipleIdentityProviders'); } catch {}
+
 app.setName('Nova Browser');
 // Portable-Release (Marker neben der EXE) → eigene Profildaten dort = Werkseinstellungen,
 // unabhängig von Entwickler-/Bestandsprofilen. Sonst normales AppData-Profil.
@@ -894,14 +899,6 @@ app.on('web-contents-created', (_e, contents) => {
   };
   contents.on('will-navigate', googleGuard);
   contents.on('will-redirect', googleGuard);
-  // Sicherheitsnetz: rutscht eine Navigation zu Google doch durch (Popup-Tab, Client-Redirect, FedCM-Fallback),
-  // sofort stoppen + zur vorherigen Seite zurück → KEIN Schwarzbild; Reroute über den Echtbrowser.
-  contents.on('did-start-navigation', (_e, url, inPlace, isMain) => {
-    if (!isMain || inPlace || !isGoogleAuth(url)) return;
-    try { contents.stop(); } catch {}
-    googleLoginViaBrowser();
-    setTimeout(() => { try { if (contents.canGoBack()) contents.goBack(); } catch {} }, 60);
-  });
 
   // UA-Metadaten via CDP setzen (echtes Chrome, vor jedem Script). Weicht DevTools/Netzwerk-Monitor aus:
   // bei offenem DevTools geben wir den Debugger frei; nach Navigationen wird das Override neu gesetzt.

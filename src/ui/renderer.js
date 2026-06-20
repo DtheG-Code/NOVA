@@ -3403,6 +3403,7 @@ const music = (() => {
   $('#music-resize').addEventListener('mousedown', (e) => {
     e.preventDefault();
     $('#drag-shield').classList.remove('hidden');
+    panel.classList.add('ms-resizing');   // Musik-Webview schluckt die Maus nicht → auch Verkleinern bleibt smooth
     const startX = e.clientX;
     const startW = panel.offsetWidth;
     const onMove = (ev) => {
@@ -3414,6 +3415,7 @@ const music = (() => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       $('#drag-shield').classList.add('hidden');
+      panel.classList.remove('ms-resizing');
       window.nova.settings.set({ musicWidth: panel.offsetWidth });
       if (current && views[current]) repaintMusic(views[current].wv);
     };
