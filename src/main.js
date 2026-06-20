@@ -992,6 +992,8 @@ app.whenReady().then(async () => {
         else if (lk === 'sec-ch-ua') h[k] = chBrand;
         else if (lk === 'sec-ch-ua-full-version-list') h[k] = chBrandFull;
       }
+      // NOVA Studio streamt VM-Images von copy.sh → Referer setzen (umgeht Hotlink-Schutz)
+      if (details.url && details.url.indexOf('copy.sh') !== -1) h['Referer'] = 'https://copy.sh/v86/';
       cb({ requestHeaders: h });
     });
   }

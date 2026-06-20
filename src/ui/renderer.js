@@ -6066,6 +6066,13 @@ const studio = (() => {
     wv.setAttribute('allowpopups', '');
     wv.setAttribute('src', 'nova://studio/');   // erst Attribute, dann src (wie mountWebview)
     body.appendChild(wv);
+    // Panel-Befehle aus dem Studio-Webview (Split/Schließen liegen im Studio-Header)
+    wv.addEventListener('ipc-message', (e) => {
+      if (e.channel !== 'studio-cmd') return;
+      const cmd = e.args && e.args[0];
+      if (cmd === 'close') close();
+      else if (cmd === 'split') setMode(mode === 'full' ? 'split' : 'full');
+    });
     return wv;
   }
   function applyMode() {
@@ -6094,8 +6101,6 @@ const studio = (() => {
 
   const btn = $('#btn-studio');
   if (btn) btn.addEventListener('click', toggle);
-  const cl = $('#studio-close'); if (cl) cl.addEventListener('click', close);
-  const md = $('#studio-mode'); if (md) md.addEventListener('click', () => setMode(mode === 'full' ? 'split' : 'full'));
 
   return { open, close, toggle };
 })();

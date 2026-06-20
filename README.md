@@ -53,8 +53,8 @@ Daten an Drittserver**. Ergebnis als **schön animierter Report** (Risiko-Ring +
 Eine vollständige **PC-VM, die komplett in NOVA läuft** — über das **Monitor-Icon** oben startbar, als **Split** oder **Vollansicht** (wie die anderen Panels).
 - **Hardware-isoliert:** Die VM läuft im **WebAssembly-Sandkasten** (v86) innerhalb eines Webviews. Der Sandkasten *ist* die Grenze — selbst Schadsoftware in der VM kann **niemals** auf den echten Rechner übergreifen.
 - **Container-Modell:** VMs werden als **Snapshots gespeichert** und lassen sich **jederzeit restlos löschen**.
-- **Schön animiert:** Nebula-Design, Reactor-Boot- und Shutdown-Animationen, VM-Bibliothek.
-- **Linux** ist sofort startklar (mitgeliefert); **ReactOS (Windows-Look)** wird beim ersten Start einmalig geladen.
+- **Schön animiert:** Nebula-Design in deiner Akzentfarbe, Reactor-Boot- und Shutdown-Animationen, VM-Bibliothek, SVG-Systemicons.
+- **Vorkonfiguriert & grafisch:** **Linux (Arch)** und **Windows (ReactOS)** booten beide direkt in einen **grafischen Desktop** (Instant-Boot per State) — einfach „Neue VM" → System wählen → startet. Snapshots werden lokal als Container gespeichert.
 
 ---
 

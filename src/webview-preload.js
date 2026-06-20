@@ -22,6 +22,7 @@ if (location.protocol === 'nova:') {
     studioImage: (os) => ipcRenderer.invoke('studio:image', os),
     studioDownload: (os) => ipcRenderer.invoke('studio:download', os),
     onStudioProgress: (cb) => ipcRenderer.on('studio:progress', (_e, p) => cb(p)),
+    studioCmd: (cmd) => ipcRenderer.sendToHost('studio-cmd', cmd),   // Panel-Befehle (split/close) an den Host
   });
 } else {
   // Auf normalen Webseiten den Ghostery-Cosmetic-Filter aktivieren:
