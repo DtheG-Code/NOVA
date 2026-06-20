@@ -1807,6 +1807,7 @@ ipcMain.handle('newtab:data', async (e) => {
     totalBlocked: settings.get('totalBlocked', 0),
     weather: await getWeather(),
     plugins: nativePluginState(),
+    nebulaQuality: settings.get('nebulaQuality', 'mid'),
   };
 });
 ipcMain.handle('newtab:suggest', (e, q) => (fromNova(e) ? fetchSuggestions(q) : []));

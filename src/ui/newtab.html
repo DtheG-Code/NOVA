@@ -456,10 +456,15 @@ let glOK = false;
 let setSceneAccent = () => {};
 let setSceneMouse = () => {};
 
-(function initGL() {
-  const gl = canvas.getContext('webgl', { antialias: true, alpha: false, premultipliedAlpha: false, powerPreference: 'high-performance' })
+function initNebula(quality) {
+  if (quality === 'low') { canvas.style.display = 'none'; glOK = false; return; }   // LOW = nur CSS-Hintergrund, kein GPU
+  const gl = canvas.getContext('webgl', { antialias: quality === 'high', alpha: false, premultipliedAlpha: false, powerPreference: 'high-performance' })
           || canvas.getContext('experimental-webgl');
-  if (!gl) return;
+  if (!gl) { start2DFallback(); return; }
+  const OCT = quality === 'high' ? 6 : 4;                              // fbm-Oktaven (Detailtiefe)
+  const DEFS = '#define FBM_OCT ' + OCT + '\n' + (quality === 'high' ? '#define PLANETS\n' : '');
+  const DPR_CAP = quality === 'high' ? 2.0 : 1.25;                     // Auflösungs-Skalierung
+  const MIN_DELTA = quality === 'high' ? 0 : 33;                       // FPS-Cap: mid ~30fps, high ungedrosselt
 
   const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
   const FRAG = `
@@ -481,7 +486,7 @@ let setSceneMouse = () => {};
   float fbm(vec2 p){
     float v = 0.0, a = 0.55;
     mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
-    for(int i = 0; i < 6; i++){ v += a * noise(p); p = m * p; a *= 0.5; }
+    for(int i = 0; i < FBM_OCT; i++){ v += a * noise(p); p = m * p; a *= 0.5; }
     return v;
   }
   // Sparse, scharf gerenderte Sterne mit Funkeln
@@ -573,7 +578,8 @@ let setSceneMouse = () => {};
                 + starLayer(suv * 2.6 + 71.1, 26.0, uTime) * 0.6;
     col += vec3(0.85, 0.92, 1.0) * stars * 1.4 * starBoost;
 
-    // ---- Planeten (langsam driftend) — bei Warp ausgeblendet
+    // ---- Planeten (langsam driftend) — bei Warp ausgeblendet (nur Qualität HIGH)
+    #ifdef PLANETS
     float planetFade = 1.0 - smoothstep(0.0, 0.4, warp);
     if (planetFade > 0.01){
       vec3 pcol = vec3(0.0);
@@ -599,6 +605,7 @@ let setSceneMouse = () => {};
       col = mix(col, col + pcol, planetFade);
       col = mix(col, pcol, max(cov, max(cov2, cov3)) * 0.92 * planetFade);
     }
+    #endif
 
     // Tiefes Basis-Schwarz + Vignette
     vec3 base = vec3(0.02, 0.02, 0.05);
@@ -625,11 +632,11 @@ let setSceneMouse = () => {};
     return sh;
   }
   const vs = compile(gl.VERTEX_SHADER, VERT);
-  const fs = compile(gl.FRAGMENT_SHADER, FRAG);
-  if (!vs || !fs) return;
+  const fs = compile(gl.FRAGMENT_SHADER, DEFS + FRAG);
+  if (!vs || !fs) { start2DFallback(); return; }
   const prog = gl.createProgram();
   gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(prog)); return; }
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.error(gl.getProgramInfoLog(prog)); start2DFallback(); return; }
   gl.useProgram(prog);
 
   const buf = gl.createBuffer();
@@ -652,8 +659,7 @@ let setSceneMouse = () => {};
   setSceneMouse = (x, y) => { tmx = x; tmy = y; };
 
   function resizeGL(){
-    // Bis zu 2.5x Pixeldichte für ultra scharfe Auflösung
-    const dpr = Math.min(devicePixelRatio || 1, 2.5);
+    const dpr = Math.min(devicePixelRatio || 1, DPR_CAP);   // Auflösungs-Skalierung je Qualität
     const w = Math.floor((innerWidth + 80) * dpr);
     const h = Math.floor((innerHeight + 80) * dpr);
     if (canvas.width !== w || canvas.height !== h) {
@@ -665,7 +671,12 @@ let setSceneMouse = () => {};
   addEventListener('resize', resizeGL);
 
   const start = performance.now();
-  (function render(){
+  let paused = false, lastFrame = 0, rafId = 0;
+  function render(now){
+    if (paused) { rafId = 0; return; }            // Tab unsichtbar → Loop stoppt (spart GPU bei vielen Tabs)
+    rafId = requestAnimationFrame(render);
+    if (MIN_DELTA && now - lastFrame < MIN_DELTA) return;   // FPS-Cap
+    lastFrame = now;
     resizeGL();
     mx += (tmx - mx) * 0.05; my += (tmy - my) * 0.05;
     gl.uniform2f(uRes, canvas.width, canvas.height);
@@ -675,10 +686,16 @@ let setSceneMouse = () => {};
     gl.uniform3fv(uAcc2, acc2);
     gl.uniform1f(uWarp, 0.0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-    requestAnimationFrame(render);
-  })();
+  }
+  // KEY: backgroundThrottling=no → Hintergrund-Tabs würden weiterrendern. Daher manuell bei Unsichtbarkeit pausieren.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { paused = true; }
+    else if (!rafId) { paused = false; lastFrame = 0; rafId = requestAnimationFrame(render); }
+  });
+  paused = document.hidden;
+  if (!paused) rafId = requestAnimationFrame(render);
   glOK = true;
-})();
+}
 
 // CSS-Hexfarbe -> linearer RGB-Vektor (für korrekte HDR-Mischung)
 function hexToLinear(hex){
@@ -709,10 +726,12 @@ function applyNtAccent(accent, custom){
 }
 syncSceneAccent();
 
-// Fallback: klassisches 2D-Starfield, falls WebGL nicht verfügbar ist
-if (!glOK) {
-  const ctx = canvas.getContext('2d');
-  let stars = [];
+// Fallback: leichtes 2D-Starfield, falls WebGL nicht verfügbar ist (pausiert bei unsichtbarem Tab)
+function start2DFallback() {
+  glOK = false;
+  const ctx = canvas.getContext('2d'); if (!ctx) return;
+  canvas.style.display = 'block';
+  let stars = [], paused = false, rafId = 0;
   function resize2d() {
     canvas.width = (innerWidth + 80) * devicePixelRatio;
     canvas.height = (innerHeight + 80) * devicePixelRatio;
@@ -724,7 +743,9 @@ if (!glOK) {
   }
   resize2d();
   addEventListener('resize', resize2d);
-  (function loop(t) {
+  function loop(t) {
+    if (paused) { rafId = 0; return; }
+    rafId = requestAnimationFrame(loop);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (const st of stars) {
       st.y -= st.s; if (st.y < -4) st.y = canvas.height + 4;
@@ -733,8 +754,13 @@ if (!glOK) {
       ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
-    requestAnimationFrame(loop);
-  })(0);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { paused = true; }
+    else if (!rafId) { paused = false; rafId = requestAnimationFrame(loop); }
+  });
+  paused = document.hidden;
+  if (!paused) rafId = requestAnimationFrame(loop);
 }
 
 let px = 0, py = 0;
@@ -895,9 +921,15 @@ const cruise = (() => {
     drawVignette();
     raf = requestAnimationFrame(frame);
   }
-  function start() { if (running) return; build(); running = true; last = performance.now(); raf = requestAnimationFrame(frame); }
+  let enabled = false, built = false;
+  function start() { if (running) return; if (!built) { build(); built = true; } running = true; last = performance.now(); raf = requestAnimationFrame(frame); }
   function stop() { running = false; cancelAnimationFrame(raf); ctx.clearRect(0, 0, cv.width, cv.height); }
-  function setEnabled(on) { document.body.classList.toggle('cruise', !!on); if (on) start(); else stop(); }
+  function setEnabled(on) { enabled = !!on; document.body.classList.toggle('cruise', enabled); if (enabled && !document.hidden) start(); else stop(); }
+  // Bei unsichtbarem Tab pausieren (backgroundThrottling=no → würde sonst in allen Tabs weiterlaufen)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { running = false; cancelAnimationFrame(raf); }
+    else if (enabled && !running) { running = true; last = performance.now(); raf = requestAnimationFrame(frame); }
+  });
   addEventListener('resize', () => { if (running) { resize(); } });
   return { setEnabled, refreshAccent: () => { if (running) readAccent(); } };
 })();
@@ -1077,6 +1109,12 @@ function closeSugg() {
 (async () => {
   try { DATA = await window.novaPage?.getData(); } catch {}
   if (!DATA) return;
+
+  // GPU-Nebula starten — Qualität low (CSS) / mid (GPU leicht) / high (GPU stark)
+  const nebQ = DATA.nebulaQuality || 'mid';
+  initNebula(nebQ);
+  // Live-Umschalten der Qualität (selten) → einfach neu laden, sauberer Neuaufbau des GL-Kontexts
+  try { window.novaPage?.onNebula?.((q) => { if (q && q !== nebQ) location.reload(); }); } catch {}
 
   applyNtAccent(DATA.accent, DATA.customAccent);
   // Live-Umfärben, wenn die Akzentfarbe im Browser geändert wird (kein Neuladen nötig)

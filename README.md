@@ -53,7 +53,10 @@ Daten an Drittserver**. Ergebnis als **schön animierter Report** (Risiko-Ring +
 
 ## ✨ Weitere Features
 
-- 🎨 **Nebula-Design** — animierte Menüs, Akzentfarben, Hyperraum-Sprung beim Laden, animierte Startseite
+- 🎨 **Nebula-Design** — animierte Menüs, Akzentfarben, Hyperraum-Sprung beim Laden
+- 🌌 **Echte GPU-Nebula auf der Startseite** (WebGL, volumetrischer fbm-Nebel + Sterne + Planeten + ACES-HDR) —
+  Qualitätsstufen in den Einstellungen: **Niedrig** (CSS, sparsam) · **Mittel** (GPU, effizient) · **Hoch** (volle 3D-Nebula).
+  Hintergrund-Tabs pausieren automatisch (auch bei 100 Tabs flüssig), Auflösung & FPS skalieren je Stufe.
 - 🧭 **Tab-Leiste oben oder seitlich** (mit animiertem Nebula)
 - 🛡️ **NOVA Shield** — Adblock + Tracking-Schutz (AdGuard/EasyList/uBlock-Listen, Cookie-Banner, Dark-Mode)
 - 🪟 **Spaces, Split View, angepinnte Tabs, Tab-Vorschauen** — mit smoothen Ein-/Ausblend-Animationen

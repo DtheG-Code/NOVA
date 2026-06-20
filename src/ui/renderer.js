@@ -2134,6 +2134,26 @@ function renderSettings() {
   const designCard = el('div', 'set-card');
   designCard.style.marginTop = '13px';
   designCard.appendChild(switchRow('Dark Mode für Webseiten', 'Webseiten erhalten das Signal, ihr dunkles Design zu verwenden', 'forceDarkWeb'));
+  // Nebula-Qualität (Startseiten-Hintergrund): CSS / GPU leicht / GPU stark
+  const nebRow = el('div', 'set-row');
+  const nebLab = el('div', 'set-label');
+  nebLab.appendChild(el('b', null, 'Nebula-Grafik (Startseite)'));
+  nebLab.appendChild(el('span', null, 'Niedrig = schlicht (CSS, sparsam) · Mittel = echte 3D-Nebula (GPU, effizient) · Hoch = volle 3D-Nebula mit Planeten & HDR. Hintergrund-Tabs pausieren automatisch.'));
+  const nebChips = el('div', 'step-chips');
+  const curNeb = s.nebulaQuality || 'mid';
+  for (const [val, label] of [['low', 'Niedrig'], ['mid', 'Mittel'], ['high', 'Hoch']]) {
+    const chip = el('button', 'step-chip' + (curNeb === val ? ' sel' : ''), label);
+    chip.addEventListener('click', async () => {
+      state.settings.nebulaQuality = val;
+      await window.nova.settings.set({ nebulaQuality: val });
+      pushNebulaToNewtabs(val);
+      renderSettings();
+      toast('Nebula-Grafik: ' + label, 'i-bolt');
+    });
+    nebChips.appendChild(chip);
+  }
+  nebRow.append(nebLab, nebChips);
+  designCard.appendChild(nebRow);
   gDesign.appendChild(designCard);
 
   // Tab-Leiste (seitlich / oben)
@@ -2688,6 +2708,15 @@ function pushPluginsToNewtabs(native) {
     const url = t.pendingUrl || t.url;
     if (isInternal(url) && t.wcId != null) {
       try { t.wv.send('newtab:plugins', native); } catch {}
+    }
+  }
+}
+// Nebula-Qualität live an alle offenen Startseiten schicken (die laden sich dann neu auf)
+function pushNebulaToNewtabs(quality) {
+  for (const t of state.tabs) {
+    const url = t.pendingUrl || t.url;
+    if (isInternal(url) && t.wcId != null) {
+      try { t.wv.send('newtab:nebula', quality); } catch {}
     }
   }
 }

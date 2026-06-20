@@ -11,6 +11,7 @@ if (location.protocol === 'nova:') {
     onDials: (cb) => ipcRenderer.on('newtab:dials', (_e, dials) => cb(dials)),
     onAccent: (cb) => ipcRenderer.on('newtab:accent', (_e, d) => cb(d)),
     onPlugins: (cb) => ipcRenderer.on('newtab:plugins', (_e, d) => cb(d)),
+    onNebula: (cb) => ipcRenderer.on('newtab:nebula', (_e, d) => cb(d)),
     // Agent-Modus: Suchbegriff als Ziel an den Browser (Host-Renderer) → NOVA Operator
     agent: (goal) => ipcRenderer.sendToHost('nova-agent', goal),
   });
