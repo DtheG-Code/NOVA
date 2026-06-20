@@ -1719,8 +1719,10 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
     // KEIN Auto-Update im Entwicklungsmodus (npm start / electron .): process.execPath ist dann das
     // Dev-Electron (node_modules\electron\dist\electron.exe) — ein In-Place-Update wuerde das Dev-Setup
     // treffen und kann nicht korrekt neu starten. Nur die gepackte NOVA.exe darf sich selbst updaten.
-    if (process.defaultApp || /(^|[\\/])electron\.exe$/i.test(process.execPath)) {
-      return { ok: false, dev: true };
+    // app.isPackaged ist das kanonische Signal: true bei umbenannter NOVA.exe, false beim Dev-Electron
+    // (Basename electron.exe). Zuverlässiger als process.defaultApp (das bei portablen Builds falsch-positiv sein kann).
+    if (!app.isPackaged) {
+      return { ok: false, dev: true, exe: path.basename(process.execPath) };
     }
     if (process.platform !== 'win32') { shell.openPath(zipPath); setTimeout(() => app.quit(), 800); return { ok: true }; }
     const exePath = process.execPath;

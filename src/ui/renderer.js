@@ -5763,7 +5763,7 @@ const updater = (() => {
         // Entwicklungsmodus (npm start) → kein Selbst-Update; nur die gepackte NOVA.exe kann das.
         hideInstallSplash();
         $('#up-now').disabled = false; $('#up-now').querySelector('span').textContent = 'Schließen';
-        toast('Entwicklungsmodus erkannt — Auto-Update läuft nur in der installierten NOVA.exe', 'i-warn');
+        toast('Entwicklungsmodus erkannt — läuft als „' + (ir.exe || '?') + '". Auto-Update geht nur aus der gepackten NOVA.exe', 'i-warn');
       } else if (ir && ir.ok === false) {
         hideInstallSplash();
         $('#up-now').disabled = false; $('#up-now').querySelector('span').textContent = 'Erneut versuchen';
