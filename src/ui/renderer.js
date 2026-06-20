@@ -4382,35 +4382,62 @@ const claude = (() => {
 // Überlappung — egal ob 1 oder mehrere Panels links/rechts/eingeklappt sind.
 const dockManager = (() => {
   const GAP = 3, COLLAPSED_GAP = 6, COLLAPSED_W = 66, EDGE = 8;   // EDGE = Rand zwischen Fensterkante und äußerstem Panel (nichts abgeschnitten)
-  const panels = new Map();   // id → { el, side, collapsed, full, open, width:()=>number }
-  let roAttached = false;
+  const MIN_SPLIT = 300;       // schmaler → lieber einklappen statt winzig anzeigen
+  const panels = new Map();    // id → { el, side, collapsed, full, open, width:()=>number, collapse:(on)=>void }
+  let roAttached = false, relayouting = false;
   function ensureRO() {
     if (roAttached) return; const va = $('#view-area'); if (!va) return;
     try { new ResizeObserver(() => layout()).observe(va, { box: 'border-box' }); roAttached = true; } catch {}
   }
-  function set(id, info) { panels.set(id, Object.assign(panels.get(id) || {}, info)); ensureRO(); layout(); }
-  function close(id) { const p = panels.get(id); if (p) p.open = false; layout(); }
+  function set(id, info) { panels.set(id, Object.assign(panels.get(id) || {}, info)); ensureRO(); if (!relayouting) layout(); }
+  function close(id) { const p = panels.get(id); if (p) p.open = false; if (!relayouting) layout(); }
+  function railSpan(list) { return list.filter((p) => p.collapsed).length * (COLLAPSED_W + COLLAPSED_GAP); }
   function layout() {
     const va = $('#view-area'); if (!va) return;
-    const r = va.getBoundingClientRect();
-    const baseL = r.left, baseR = window.innerWidth - r.right;
-    let lx = baseL + EDGE, rx = baseR + EDGE, hasL = false, hasR = false;   // EDGE-Rand vor dem äußersten Panel
-    for (const p of panels.values()) {
-      if (!p.open || !p.el) continue;
-      p.el.style.top = Math.round(r.top) + 'px';
-      if (p.full && !p.collapsed) {                       // Vollbild: deckt den ganzen Inhaltsbereich
-        p.el.style.left = Math.round(r.left) + 'px'; p.el.style.right = 'auto'; p.el.style.width = Math.round(r.width) + 'px';
-        continue;
+    relayouting = true;
+    try {
+      const r = va.getBoundingClientRect();
+      const baseL = r.left, baseR = window.innerWidth - r.right;
+      const open = [...panels.values()].filter((p) => p.open && p.el);
+      const fulls = open.filter((p) => p.full && !p.collapsed);
+      const docked = open.filter((p) => !(p.full && !p.collapsed));   // eingeklappt + Split
+
+      // Auto-Einklappen: passen mehrere Split-Panels nicht (jedes bekäme < MIN_SPLIT), klappe die jüngsten ein
+      let splits = docked.filter((p) => !p.collapsed);
+      while (splits.length > 1 && (r.width - 2 * EDGE - railSpan(docked)) / splits.length < MIN_SPLIT) {
+        const victim = splits[splits.length - 1];
+        victim.collapsed = true;
+        try { victim.collapse && victim.collapse(true); } catch {}
+        splits = splits.filter((p) => p !== victim);
       }
-      let w = p.collapsed ? COLLAPSED_W : Math.round((p.width && p.width()) || 460);
-      if (!p.collapsed) w = Math.min(w, Math.max(300, r.width - 110));   // kleine Bildschirme: nie über den Inhalt hinaus
-      const g = p.collapsed ? COLLAPSED_GAP : GAP;   // eingeklappte Rails: einheitlicher Abstand (= Inhalt↔Rail = Rail↔Rail)
-      p.el.style.width = w + 'px';
-      if (p.side === 'left') { p.el.style.left = Math.round(lx) + 'px'; p.el.style.right = 'auto'; lx += w + g; hasL = true; }
-      else { p.el.style.right = Math.round(rx) + 'px'; p.el.style.left = 'auto'; rx += w + g; hasR = true; }
-    }
-    va.style.paddingLeft = hasL ? Math.round(lx - baseL) + 'px' : '';
-    va.style.paddingRight = hasR ? Math.round(rx - baseR) + 'px' : '';
+      const avail = r.width - 2 * EDGE - railSpan(docked);
+      const share = splits.length ? Math.floor(avail / splits.length) : 0;
+
+      // Eingeklappte Rails + Split-Panels von den Rändern stapeln
+      let lx = baseL + EDGE, rx = baseR + EDGE, hasL = false, hasR = false;
+      for (const p of docked) {
+        if (!p.el) continue;
+        p.el.style.top = Math.round(r.top) + 'px';
+        const w = p.collapsed ? COLLAPSED_W : Math.max(220, Math.min(Math.round((p.width && p.width()) || 460), share));
+        const g = p.collapsed ? COLLAPSED_GAP : GAP;
+        p.el.style.width = w + 'px';
+        if (p.side === 'left') { p.el.style.left = Math.round(lx) + 'px'; p.el.style.right = 'auto'; lx += w + g; hasL = true; }
+        else { p.el.style.right = Math.round(rx) + 'px'; p.el.style.left = 'auto'; rx += w + g; hasR = true; }
+      }
+      const leftUsed = hasL ? Math.round(lx - baseL) : 0;
+      const rightUsed = hasR ? Math.round(rx - baseR) : 0;
+
+      // Vollbild füllt NUR den Platz zwischen den angedockten Panels → keine Überlappung mit den Rails
+      for (const p of fulls) {
+        p.el.style.top = Math.round(r.top) + 'px';
+        p.el.style.left = Math.round(r.left + leftUsed) + 'px';
+        p.el.style.right = 'auto';
+        p.el.style.width = Math.round(r.width - leftUsed - rightUsed) + 'px';
+      }
+
+      va.style.paddingLeft = leftUsed ? leftUsed + 'px' : '';
+      va.style.paddingRight = rightUsed ? rightUsed + 'px' : '';
+    } finally { relayouting = false; }
   }
   let raf = 0;
   function layoutAnimated() { try { cancelAnimationFrame(raf); } catch {} const t0 = performance.now(); const tick = (t) => { layout(); if (t - t0 < 460) raf = requestAnimationFrame(tick); }; raf = requestAnimationFrame(tick); }
@@ -4459,7 +4486,7 @@ const operator = (() => {
     if (!stage) return;
     stage.classList.toggle('as-left', stageSide === 'left');
     stage.classList.toggle('as-collapsed', stageCollapsed);
-    dockManager.set('agent', { el: stage, side: stageSide, collapsed: stageCollapsed, full: false, open: stageMode, width: () => Math.round(Math.min(880, Math.max(440, window.innerWidth * 0.47))) });
+    dockManager.set('agent', { el: stage, side: stageSide, collapsed: stageCollapsed, full: false, open: stageMode, width: () => Math.round(Math.min(880, Math.max(440, window.innerWidth * 0.47))), collapse: setStageCollapsed });
   }
   // Layout ändert sich animiert (Favoritenleiste ein-/ausklappen) → Bühne pro Frame MITwandern,
   // statt erst nach der Sidebar-Animation zu springen. Trackt #view-area über ~0,42 s.
@@ -6227,7 +6254,7 @@ const discord = (() => {
     stageEl.classList.toggle('dc-left', side === 'left' && !full);
     stageEl.classList.toggle('dc-collapsed', collapsed);
     stageEl.classList.toggle('dc-fullscreen', full);
-    dockManager.set('discord', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+    dockManager.set('discord', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth, collapse: setCollapsed });
   }
   function setLayout(l) {
     if (l !== 'split' && l !== 'full') return;
@@ -6382,7 +6409,7 @@ const whatsapp = (() => {
     stageEl.classList.toggle('wa-left', side === 'left' && !full);
     stageEl.classList.toggle('wa-collapsed', collapsed);
     stageEl.classList.toggle('wa-fullscreen', full);
-    dockManager.set('whatsapp', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+    dockManager.set('whatsapp', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth, collapse: setCollapsed });
   }
   function setLayout(l) { if (l !== 'split' && l !== 'full') return; layout = l; collapsed = false; const fb = $('#wa-full'); if (fb) fb.classList.toggle('active', l === 'full'); try { state.settings.whatsappLayout = l; window.nova.settings.set({ whatsappLayout: l }); } catch {} dock(); }
   function setSide(s) { if (s !== 'left' && s !== 'right') return; side = s; try { state.settings.whatsappSide = s; window.nova.settings.set({ whatsappSide: s }); } catch {} dock(); }
@@ -6471,7 +6498,7 @@ const vault = (() => {
     stageEl.classList.toggle('vt-collapsed', collapsed);
     stageEl.classList.toggle('vt-fullscreen', full);
     document.body.classList.toggle('vt-full-cover', full);   // Vollbild → Webviews dahinter ausblenden
-    dockManager.set('vault', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+    dockManager.set('vault', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth, collapse: setCollapsed });
   }
   function setSide(s) { if (s !== 'left' && s !== 'right') return; side = s; try { state.settings.vaultSide = s; window.nova.settings.set({ vaultSide: s }); } catch {} dock(); }
   function setLayout(l) { if (l !== 'split' && l !== 'full') return; layout = l; collapsed = false; const fb = $('#vt-full'); if (fb) fb.classList.toggle('active', l === 'full'); try { state.settings.vaultLayout = l; window.nova.settings.set({ vaultLayout: l }); } catch {} dock(); }
@@ -6760,7 +6787,7 @@ const share = (() => {
     stageEl.classList.toggle('sh-collapsed', collapsed);
     stageEl.classList.toggle('sh-fullscreen', full);
     document.body.classList.toggle('sh-full-cover', full);
-    dockManager.set('share', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth });
+    dockManager.set('share', { el: stageEl, side, collapsed, full, open: mode, width: splitWidth, collapse: setCollapsed });
   }
   function setSide(s) { if (s !== 'left' && s !== 'right') return; side = s; try { state.settings.shareSide = s; window.nova.settings.set({ shareSide: s }); } catch {} dock(); }
   function setLayout(l) { if (l !== 'split' && l !== 'full') return; layout = l; collapsed = false; const fb = $('#sh-full'); if (fb) fb.classList.toggle('active', l === 'full'); try { state.settings.shareLayout = l; window.nova.settings.set({ shareLayout: l }); } catch {} dock(); }

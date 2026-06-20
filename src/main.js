@@ -1212,6 +1212,13 @@ function flushAll() {
   try { settings?.flush(); } catch {}
   try { bookmarks?.flush(); } catch {}
   try { history?.flush(); } catch {}
+  // Sitzungsspeicher der Webview-Partitionen auf Platte schreiben, damit Logins (Discord-Token in
+  // localStorage, WhatsApp in IndexedDB, Cookies …) Neustarts/Updates zuverlässig überleben.
+  try {
+    ['persist:nova', 'persist:nova-music', 'persist:nova-discord', 'persist:nova-whatsapp', 'persist:nova-claude'].forEach((p) => {
+      try { const s = session.fromPartition(p); s.flushStorageData(); try { s.cookies.flushStore(); } catch {} } catch {}
+    });
+  } catch {}
 }
 app.on('window-all-closed', () => { flushAll(); app.quit(); });
 app.on('before-quit', flushAll);
@@ -1913,6 +1920,7 @@ ipcMain.handle('update:install', async (_e, zipPath) => {
     if (!app.isPackaged) {
       return { ok: false, dev: true, exe: path.basename(process.execPath) };
     }
+    flushAll();   // Logins (Discord/WhatsApp/…) + Einstellungen auf Platte sichern, bevor NOVA fürs Update hart beendet wird
     if (process.platform !== 'win32') { shell.openPath(zipPath); setTimeout(() => app.quit(), 800); return { ok: true }; }
     const exePath = process.execPath;
     const installDir = path.dirname(exePath);
