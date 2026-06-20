@@ -882,10 +882,14 @@ app.on('web-contents-created', (_e, contents) => {
     return { action: 'deny' };
   });
 
-  // Google-Sign-in im Webview → echtes Login-Fenster + Sitzungs-Import (statt geblocktem Embed)
-  contents.on('will-navigate', (e, url) => {
+  // Google-Sign-in im Webview → echtes Login-Fenster + Sitzungs-Import (statt geblocktem Embed = Schwarzbild).
+  // will-navigate fängt direkte Navigationen, will-redirect die OAuth-302-Weiterleitungen
+  // (z. B. „Mit Google anmelden" auf Spotify/Discord/Drittseiten) — sonst landet das Webview auf der geblockten Seite.
+  const googleGuard = (e, url) => {
     if (/^https:\/\/accounts\.google\.com\//i.test(url)) { e.preventDefault(); googleLoginViaBrowser(); }
-  });
+  };
+  contents.on('will-navigate', googleGuard);
+  contents.on('will-redirect', googleGuard);
 
   // UA-Metadaten via CDP setzen (echtes Chrome, vor jedem Script). Weicht DevTools/Netzwerk-Monitor aus:
   // bei offenem DevTools geben wir den Debugger frei; nach Navigationen wird das Override neu gesetzt.
@@ -2262,6 +2266,69 @@ ipcMain.handle('vault:fill', (_e, id, origin) => {
   return { ok: true, username: e.username, password: e.password };
 });
 ipcMain.handle('vault:generate', (_e, opts) => ({ ok: true, password: vaultGenerate(opts) }));
+
+// ---- Passwort-Import aus CSV (Chrome/Edge/Brave-Export u. a.) ----
+function parseCsv(text) {
+  const rows = []; let row = [], field = '', inQ = false;
+  text = String(text).replace(/^﻿/, '');
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\r') { /* skip */ }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+function csvCol(header, names) {
+  for (let i = 0; i < header.length; i++) if (names.includes(String(header[i]).trim().toLowerCase())) return i;
+  return -1;
+}
+ipcMain.handle('vault:importFile', async () => {
+  if (!vaultUnlocked()) return { ok: false, locked: true };
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const pick = await dialog.showOpenDialog(win, { title: 'Passwörter importieren (CSV)', filters: [{ name: 'CSV', extensions: ['csv', 'txt'] }], properties: ['openFile'] });
+  if (pick.canceled || !pick.filePaths.length) return { ok: false, canceled: true };
+  let text; try { text = fs.readFileSync(pick.filePaths[0], 'utf8'); } catch { return { ok: false, error: 'read' }; }
+  const rows = parseCsv(text).filter((r) => r.length && r.some((c) => String(c).trim()));
+  if (rows.length < 2) return { ok: false, error: 'empty' };
+  const header = rows[0];
+  const iUrl = csvCol(header, ['url', 'website', 'web site', 'login_uri', 'uri', 'hostname', 'site']);
+  const iUser = csvCol(header, ['username', 'user', 'login', 'login_username', 'email', 'e-mail', 'account', 'benutzername']);
+  const iPass = csvCol(header, ['password', 'pass', 'login_password', 'passwort', 'kennwort']);
+  const iName = csvCol(header, ['name', 'title', 'titel']);
+  const iNote = csvCol(header, ['note', 'notes', 'comment', 'comments', 'notiz', 'notizen']);
+  if (iPass < 0 && iUser < 0) return { ok: false, error: 'format' };   // Spalten nicht erkennbar
+  const existing = new Set(vaultData.entries.map((e) => (vaultHost(e.url) + '|' + (e.username || '')).toLowerCase()));
+  const now = Date.now(); let added = 0, skipped = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const url = iUrl >= 0 ? String(row[iUrl] || '').trim() : '';
+    const username = iUser >= 0 ? String(row[iUser] || '').trim() : '';
+    const password = iPass >= 0 ? String(row[iPass] || '') : '';
+    if (!password && !username) { skipped++; continue; }
+    const key = (vaultHost(url) + '|' + username).toLowerCase();
+    if (existing.has(key)) { skipped++; continue; }
+    existing.add(key);
+    vaultData.entries.push({
+      id: crypto.randomUUID(),
+      title: ((iName >= 0 && String(row[iName] || '').trim()) || vaultHost(url) || username || 'Import').slice(0, 200),
+      url: url.slice(0, 500), username: username.slice(0, 500), password: String(password),
+      notes: iNote >= 0 ? String(row[iNote] || '').slice(0, 5000) : '', totp: '',
+      createdAt: now, updatedAt: now,
+    });
+    added++;
+  }
+  if (added) vaultPersist();
+  vaultTouch();
+  return { ok: true, added, skipped };
+});
+
 ipcMain.handle('vault:changeMaster', (_e, oldPw, newPw) => {
   try {
     if (!vaultUnlocked()) return { ok: false, locked: true };

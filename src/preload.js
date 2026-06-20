@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld('nova', {
     match: invoke('vault:match'),
     fill: (id, origin) => ipcRenderer.invoke('vault:fill', id, origin),
     generate: invoke('vault:generate'),
+    importFile: invoke('vault:importFile'),
     changeMaster: (oldPw, newPw) => ipcRenderer.invoke('vault:changeMaster', oldPw, newPw),
     copy: (id, field) => ipcRenderer.invoke('vault:copy', id, field),
     onLocked: on('vault:locked'),

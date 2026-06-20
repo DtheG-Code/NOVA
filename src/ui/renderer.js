@@ -3255,7 +3255,10 @@ const music = (() => {
     // Spotify/Apple bleiben bewusst OHNE Preload (Player-Kompatibilität).
     if (svc === 'ytmusic' && state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
     wv.setAttribute('src', SERVICES[svc].url);
+    let loaded = false, retries = 0;
+    const reloadSvc = () => { try { wv.reload(); } catch { try { wv.loadURL(SERVICES[svc].url); } catch {} } };
     wv.addEventListener('did-stop-loading', () => {
+      loaded = true; retries = 0;
       loading.style.display = 'none';
       applyZoom(svc, wv);
       repaintMusic(wv);
@@ -3263,6 +3266,13 @@ const music = (() => {
       pushVolume();
     });
     wv.addEventListener('dom-ready', () => { applyZoom(svc, wv); repaintMusic(wv); pushVolume(); });
+    // Robust laden: bei Fehlschlag mit Backoff neu versuchen (sonst bleibt z. B. Spotify leer/schwarz)
+    wv.addEventListener('did-fail-load', (e) => {
+      if (e.errorCode === -3 || e.isMainFrame === false) return;   // -3 = abgebrochen (normal bei Weiterleitungen)
+      if (retries < 4) { retries++; loaded = false; loading.style.display = 'flex'; setTimeout(reloadSvc, 800 * retries); }
+    });
+    // Watchdog: wenn nach 14 s nichts geladen ist, einmal neu anstoßen
+    setTimeout(() => { if (!loaded && retries < 4) { retries++; reloadSvc(); } }, 14000);
     wrap.append(loading, wv);
     body.appendChild(wrap);
     views[svc] = { wrap, wv, svc };
@@ -6678,6 +6688,12 @@ const vault = (() => {
   $('#vt-f-pass').addEventListener('input', updateMeter);
   $('#vt-f-gen').addEventListener('click', openGen);
   $('#vt-gen-open').addEventListener('click', openGen);
+  $('#vt-import').addEventListener('click', async () => {
+    const r = await V.importFile();
+    if (r.ok) { toast(r.added + ' importiert' + (r.skipped ? ' · ' + r.skipped + ' übersprungen' : ''), 'i-check'); loadList(); }
+    else if (r.locked) { unlocked = false; showScreen(); }
+    else if (!r.canceled) toast(r.error === 'format' ? 'CSV-Spalten nicht erkannt' : r.error === 'empty' ? 'Datei ist leer' : 'Import fehlgeschlagen', 'i-warn');
+  });
   $('#vt-gen-x').addEventListener('click', closeGen);
   $('#vt-gen-regen').addEventListener('click', genNow);
   $('#vt-gen-len').addEventListener('input', () => { $('#vt-gen-lenv').textContent = $('#vt-gen-len').value; genNow(); });
