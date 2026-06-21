@@ -514,6 +514,15 @@ body.tabs-top #tabstrip-tabs .tab.pinned-mini .tab-close { display: none; }
 }
 .settings-btn:hover { background: color-mix(in srgb, var(--acc) 24%, transparent); }
 
+/* ---- Schmal-Modus der Seitenleiste (sehr klein gezogen): alles kompakt, Fußleiste vertikal (Opera-Stil) ---- */
+#sidebar.sb-narrow .sb-foot { flex-direction: column; align-items: center; gap: 7px; }
+#sidebar.sb-narrow .sb-foot-btns { flex-direction: column; gap: 4px; margin-left: 0; }
+#sidebar.sb-narrow .settings-btn { margin-left: 0; }
+#sidebar.sb-narrow #mini-shield { padding: 6px; gap: 0; }
+#sidebar.sb-narrow #mini-shield #mini-shield-count { display: none; }   /* nur Schild-Icon, Zahl ausblenden */
+#sidebar.sb-narrow #btn-newtab { justify-content: center; }
+#sidebar.sb-narrow #btn-newtab kbd { display: none; }                   /* „Strg T"-Hinweis ausblenden */
+
 /* ============================== buttons */
 .icon-btn {
   width: 32px; height: 32px; border-radius: 10px;

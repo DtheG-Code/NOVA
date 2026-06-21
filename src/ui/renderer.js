@@ -2561,6 +2561,8 @@ function toggleSidebar() {
   setTimeout(() => { if (typeof claude !== 'undefined') claude.relayout(); }, 320);
 }
 // Seitenleiste fein in der Breite ziehen (Griff am rechten Rand) — Panels passen sich live mit an
+const SB_MIN = 150, SB_MAX = 460, SB_NARROW = 230;   // unter SB_NARROW → kompakter Schmal-Modus (Fußleiste vertikal)
+function applySidebarNarrow(w) { const sb = $('#sidebar'); if (sb) sb.classList.toggle('sb-narrow', w < SB_NARROW); }
 function setupSidebarResize() {
   const handle = $('#sb-resize'), app = $('#app'), sidebar = $('#sidebar');
   if (!handle || !app || !sidebar || handle._bound) return;
@@ -2569,6 +2571,7 @@ function setupSidebarResize() {
     try { dockManager.layout(); } catch {}
     try { if (typeof claude !== 'undefined' && claude.relayout) claude.relayout(); } catch {}
   };
+  applySidebarNarrow(sidebar.offsetWidth);
   handle.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -2576,8 +2579,9 @@ function setupSidebarResize() {
     document.body.classList.add('sb-resizing');
     const startX = e.clientX, startW = sidebar.offsetWidth;
     const onMove = (ev) => {
-      const w = Math.min(460, Math.max(200, startW + (ev.clientX - startX)));
+      const w = Math.min(SB_MAX, Math.max(SB_MIN, startW + (ev.clientX - startX)));
       app.style.setProperty('--sb-w', w + 'px');
+      applySidebarNarrow(w);
       relayoutPanels();
     };
     const onUp = () => {
@@ -2593,6 +2597,7 @@ function setupSidebarResize() {
   });
   handle.addEventListener('dblclick', () => {   // Doppelklick → Standardbreite
     app.style.setProperty('--sb-w', '272px');
+    applySidebarNarrow(272);
     window.nova.settings.set({ sidebarWidth: 272 });
     relayoutPanels();
   });
@@ -7073,7 +7078,7 @@ if (window.nova.google && window.nova.google.onStatus) {
   state.totalBlocked = data.totalBlocked;
 
   if (state.settings.sidebarCollapsed) $('#app').classList.add('sb-collapsed');
-  if (typeof state.settings.sidebarWidth === 'number') $('#app').style.setProperty('--sb-w', Math.min(460, Math.max(200, state.settings.sidebarWidth)) + 'px');
+  if (typeof state.settings.sidebarWidth === 'number') $('#app').style.setProperty('--sb-w', Math.min(SB_MAX, Math.max(SB_MIN, state.settings.sidebarWidth)) + 'px');
   setupSidebarResize();
   if (state.settings.bmCollapsed) $('#sidebar').classList.add('bm-collapsed');
   if (data.isMaximized) $('#win-max-ic').querySelector('use').setAttribute('href', '#i-restore');
