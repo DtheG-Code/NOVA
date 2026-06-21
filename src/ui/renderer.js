@@ -495,6 +495,17 @@ function applyTabBarMode() {
   renderTabList();
 }
 $('#tabstrip-new').addEventListener('click', () => createTab());
+// Mittelklick auf den LEEREN Bereich der Tab-Leiste (oben oder seitlich) → neuer Tab.
+// Mittelklick auf einen Tab schließt ihn weiterhin (der Chip behandelt das selbst) → Tab-Chips & Buttons ausnehmen.
+['#tabstrip', '#tab-list'].forEach((sel) => {
+  const el = $(sel); if (!el) return;
+  el.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    if (e.target.closest && (e.target.closest('.tab') || e.target.closest('button'))) return;
+    e.preventDefault();
+    createTab();
+  });
+});
 
 // Zeigt unten an, wie viele Tabs außerhalb des sichtbaren Bereichs liegen.
 function updateTabOverflow() {
