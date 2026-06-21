@@ -130,11 +130,21 @@ body.neb-gpu #sidebar { background: rgba(5, 5, 11, 0.55); }            /* Sideba
 #app {
   position: relative; z-index: 1;
   display: grid;
-  grid-template-columns: 272px 1fr;
+  grid-template-columns: var(--sb-w, 272px) 1fr;
   height: 100vh;
   transition: grid-template-columns 0.3s var(--ease);
 }
 #app.sb-collapsed, #app.content-fs { grid-template-columns: 0px 1fr; }
+
+/* Seitenleiste fein in der Breite ziehbar — dezenter, leuchtender Griff am rechten Rand */
+#sb-resize { position: absolute; top: 0; bottom: 0; left: calc(var(--sb-w, 272px) - 10px); width: 11px; z-index: 7; cursor: col-resize; -webkit-app-region: no-drag; }
+#sb-resize::before { content: ''; position: absolute; inset: 0 0 0 auto; width: 2px; background: transparent; transition: background 0.16s, box-shadow 0.16s; }
+#sb-resize:hover::before, body.sb-resizing #sb-resize::before { background: var(--acc); box-shadow: 0 0 10px var(--acc-glow), 0 0 2px var(--acc); }
+#sb-resize::after { content: ''; position: absolute; top: 50%; right: -1px; width: 4px; height: 38px; transform: translateY(-50%); border-radius: 4px; background: var(--border-2); opacity: 0; transition: opacity 0.16s, background 0.16s, box-shadow 0.16s; }
+#sb-resize:hover::after, body.sb-resizing #sb-resize::after { opacity: 1; background: var(--acc); box-shadow: 0 0 12px var(--acc-glow); }
+#app.sb-collapsed #sb-resize, #app.content-fs #sb-resize { display: none; }
+body.sb-resizing { cursor: col-resize; user-select: none; }
+body.sb-resizing #app { transition: none; }
 
 /* ============================== sidebar */
 #sidebar {

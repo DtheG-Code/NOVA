@@ -2560,6 +2560,43 @@ function toggleSidebar() {
   if (typeof operator !== 'undefined') operator.relayoutAnimated();   // Bühne SOFORT mit der Sidebar mit-animieren
   setTimeout(() => { if (typeof claude !== 'undefined') claude.relayout(); }, 320);
 }
+// Seitenleiste fein in der Breite ziehen (Griff am rechten Rand) — Panels passen sich live mit an
+function setupSidebarResize() {
+  const handle = $('#sb-resize'), app = $('#app'), sidebar = $('#sidebar');
+  if (!handle || !app || !sidebar || handle._bound) return;
+  handle._bound = true;
+  const relayoutPanels = () => {
+    try { dockManager.layout(); } catch {}
+    try { if (typeof claude !== 'undefined' && claude.relayout) claude.relayout(); } catch {}
+  };
+  handle.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    $('#drag-shield').classList.remove('hidden');
+    document.body.classList.add('sb-resizing');
+    const startX = e.clientX, startW = sidebar.offsetWidth;
+    const onMove = (ev) => {
+      const w = Math.min(460, Math.max(200, startW + (ev.clientX - startX)));
+      app.style.setProperty('--sb-w', w + 'px');
+      relayoutPanels();
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      $('#drag-shield').classList.add('hidden');
+      document.body.classList.remove('sb-resizing');
+      window.nova.settings.set({ sidebarWidth: sidebar.offsetWidth });
+      relayoutPanels();
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+  handle.addEventListener('dblclick', () => {   // Doppelklick → Standardbreite
+    app.style.setProperty('--sb-w', '272px');
+    window.nova.settings.set({ sidebarWidth: 272 });
+    relayoutPanels();
+  });
+}
 $('#bm-head').addEventListener('click', () => {
   const collapsed = $('#sidebar').classList.toggle('bm-collapsed');
   window.nova.settings.set({ bmCollapsed: collapsed });
@@ -7036,6 +7073,8 @@ if (window.nova.google && window.nova.google.onStatus) {
   state.totalBlocked = data.totalBlocked;
 
   if (state.settings.sidebarCollapsed) $('#app').classList.add('sb-collapsed');
+  if (typeof state.settings.sidebarWidth === 'number') $('#app').style.setProperty('--sb-w', Math.min(460, Math.max(200, state.settings.sidebarWidth)) + 'px');
+  setupSidebarResize();
   if (state.settings.bmCollapsed) $('#sidebar').classList.add('bm-collapsed');
   if (data.isMaximized) $('#win-max-ic').querySelector('use').setAttribute('href', '#i-restore');
 
