@@ -2561,8 +2561,12 @@ function toggleSidebar() {
   setTimeout(() => { if (typeof claude !== 'undefined') claude.relayout(); }, 320);
 }
 // Seitenleiste fein in der Breite ziehen (Griff am rechten Rand) — Panels passen sich live mit an
-const SB_MIN = 150, SB_MAX = 460, SB_NARROW = 230;   // unter SB_NARROW → kompakter Schmal-Modus (Fußleiste vertikal)
-function applySidebarNarrow(w) { const sb = $('#sidebar'); if (sb) sb.classList.toggle('sb-narrow', w < SB_NARROW); }
+const SB_MIN = 64, SB_MAX = 460, SB_NARROW = 230, SB_MINI = 116;   // <230 schmal (Fußleiste vertikal), <116 Icon-Modus
+function applySidebarNarrow(w) {
+  const sb = $('#sidebar'); if (!sb) return;
+  sb.classList.toggle('sb-narrow', w < SB_NARROW);
+  sb.classList.toggle('sb-mini', w < SB_MINI);   // reiner Icon-Modus: Labels/Suche/Favoriten aus, nur Icons + Spaces
+}
 function setupSidebarResize() {
   const handle = $('#sb-resize'), app = $('#app'), sidebar = $('#sidebar');
   if (!handle || !app || !sidebar || handle._bound) return;

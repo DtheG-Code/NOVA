@@ -523,6 +523,25 @@ body.tabs-top #tabstrip-tabs .tab.pinned-mini .tab-close { display: none; }
 #sidebar.sb-narrow #btn-newtab { justify-content: center; }
 #sidebar.sb-narrow #btn-newtab kbd { display: none; }                   /* „Strg T"-Hinweis ausblenden */
 
+/* ---- Ultra-schmaler ICON-Modus (sehr klein gezogen): nur Icons + Spaces, Labels/Suche/Favoriten aus ---- */
+#sidebar.sb-mini { padding: 0 5px 8px; gap: 7px; }
+#sidebar.sb-mini .sb-head { justify-content: center; padding: 0; }
+#sidebar.sb-mini .logo { justify-content: center; gap: 0; }
+#sidebar.sb-mini .logo-text, #sidebar.sb-mini #space-name { display: none; }     /* „NOVA"-Text + „HOME" weg */
+#sidebar.sb-mini #sb-filter { display: none; }                                    /* Suche weg */
+#sidebar.sb-mini #bm-section { display: none; }                                   /* Favoriten weg */
+#sidebar.sb-mini .tabs-head { display: none; }                                    /* „Tabs"-Kopf weg */
+#sidebar.sb-mini #btn-newtab { justify-content: center; padding: 10px 0; }
+#sidebar.sb-mini #btn-newtab span, #sidebar.sb-mini #btn-newtab kbd { display: none; }   /* nur „+" */
+#sidebar.sb-mini #spaces-row { justify-content: center; flex-wrap: wrap; }        /* Spaces bleiben sichtbar, zentriert */
+#sidebar.sb-mini #tab-overflow span { display: none; }
+#sidebar.sb-mini #pinned-grid { justify-content: center; }
+/* Tabs als zentrierte Favicons (Titel weg, Schließen on-hover) */
+#sidebar.sb-mini #tab-list .tab { position: relative; justify-content: center; padding: 7px 0; gap: 0; }
+#sidebar.sb-mini #tab-list .tab-title, #sidebar.sb-mini #tab-list .tab-audio { display: none; }
+#sidebar.sb-mini #tab-list .tab-close { position: absolute; top: 1px; right: 1px; opacity: 0; transition: opacity 0.14s; }
+#sidebar.sb-mini #tab-list .tab:hover .tab-close { opacity: 1; }
+
 /* ============================== buttons */
 .icon-btn {
   width: 32px; height: 32px; border-radius: 10px;
