@@ -506,6 +506,23 @@ $('#tabstrip-new').addEventListener('click', () => createTab());
     createTab();
   });
 });
+// Sicherheitsnetz für alle Ziehvorgänge (Seitenleiste, Musik-Panel, Panel-Docking, Split-View):
+// Während des Ziehens liegt ein unsichtbares Overlay (#drag-shield) über der GESAMTEN Oberfläche.
+// Geht das mouseup verloren — z. B. weil außerhalb des Fensters losgelassen wurde —, bliebe es liegen
+// und nichts wäre mehr anklickbar (Seite wirkt „eingefroren"). Deshalb: sobald sich die Maus ohne
+// gedrückte Taste bewegt oder das Fenster den Fokus verliert, wird es zwangsweise entfernt.
+(function dragShieldWatchdog() {
+  const shield = $('#drag-shield'); if (!shield) return;
+  const release = () => {
+    if (!shield.classList.contains('hidden')) shield.classList.add('hidden');
+    document.body.classList.remove('sb-resizing');
+    document.querySelectorAll('.dc-dragmask, .dc-snap').forEach((n) => n.classList.add('hidden'));
+  };
+  window.addEventListener('mousemove', (e) => { if (e.buttons === 0) release(); }, true);
+  window.addEventListener('mouseup', () => setTimeout(release, 0), true);
+  window.addEventListener('blur', release);
+  window.addEventListener('pointercancel', release, true);
+})();
 // Der Leerraum der oberen Tab-Leiste ist bewusst KEINE app-region:drag mehr (die würde den Mittelklick
 // schlucken). Fenster-Ziehen + Doppelklick-Maximieren daher hier selbst umsetzen.
 (function setupTabstripFreeArea() {

@@ -76,6 +76,12 @@ let settings, bookmarks, history, securityDb;
 const tabBlockCounts = new Map(); // webContentsId -> count
 const tabBlockHosts = new Map(); // webContentsId -> Map(host -> count)
 const whitelistFilters = new Map(); // host -> filter[]
+// Seiten, die bei blockierten Skripten den Zugriff sperren (Betrugs-/Bot-Erkennung) → immer ungefiltert
+const PAYMENT_ALLOW = [
+  'paypal.com', 'paypal.me', 'stripe.com', 'checkout.com', 'adyen.com', 'klarna.com', 'sofort.com',
+  'sparkasse.de', 'commerzbank.de', 'deutsche-bank.de', 'postbank.de', 'ing.de', 'dkb.de',
+  'volksbank.de', 'vr.de', 'n26.com', 'revolut.com', 'wise.com', 'kreditkartenbanking.de',
+];
 const downloads = new Map(); // id -> { item, meta }
 let dlCounter = 0;
 let widevineState = { available: false, ready: false, status: 'wird initialisiert' };
@@ -273,6 +279,11 @@ async function initAdblock() {
 
     // Eigene Filterregeln des Nutzers anwenden
     await applyCustomFilters();
+
+    // Zahlungs-, Banking- und Anmeldedienste NIE filtern: sie prüfen aktiv, ob Skripte blockiert
+    // werden (Betrugs-/Bot-Erkennung) und sperren sonst den Zugriff — bei PayPal z. B. mit
+    // „Der Zugriff ist vorübergehend eingeschränkt". Dort gibt es ohnehin keine Werbung.
+    for (const host of PAYMENT_ALLOW) await addWhitelistFilters(host);
 
     // Whitelist aus Settings anwenden
     for (const host of settings.get('whitelist', [])) await addWhitelistFilters(host);
