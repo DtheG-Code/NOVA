@@ -160,6 +160,7 @@ if (location.protocol === 'nova:') {
     let vaultLocked = false;     // Tresor gesperrt? → Vorschlag wird trotzdem angezeigt, Entsperren erst beim Klick
     let groups = [];             // erkannte Login-Gruppen [{user,pass,form}]
     let activeGroup = null, chipAnchor = null, chipHost = null, chipRoot = null, chipVisible = false, chipHovered = false;
+    let chipSig = '', lastDetect = '';   // verhindern, dass der Chip unnötig neu aufgebaut wird (Klick-Verlust)
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -184,8 +185,13 @@ if (location.protocol === 'nova:') {
     }
     function refresh() {
       groups = findGroups();
-      try { ipcRenderer.sendToHost('vault-detect', { origin, hasLogin: groups.length > 0 }); } catch (e) {}
-      if (!groups.length) hideChip();
+      const sig = origin + '|' + groups.length;
+      if (sig !== lastDetect) {   // nur bei echter Änderung melden (sonst Dauerfeuer auf SPA-Seiten)
+        lastDetect = sig;
+        try { ipcRenderer.sendToHost('vault-detect', { origin, hasLogin: groups.length > 0 }); } catch (e) {}
+      }
+      // Chip NUR schließen, wenn das Feld, an dem er hängt, wirklich aus dem DOM verschwunden ist
+      if (chipVisible && chipAnchor && !document.contains(chipAnchor)) hideChip();
     }
 
     // ---- Animiertes Tippen ins Feld (Glow + zeichenweise, framework-kompatibel) ----
@@ -229,9 +235,10 @@ if (location.protocol === 'nova:') {
         + 'background:linear-gradient(165deg,rgba(18,17,34,.98),rgba(8,8,16,.99));border:1px solid rgba(124,140,255,.42);'
         + 'box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 40px rgba(124,140,255,.22);backdrop-filter:blur(20px)}'
         + '.wrap.on{opacity:1;transform:none}'
-        + '.hd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.07)}'
+        + '.hd{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid rgba(255,255,255,.07);white-space:nowrap;line-height:1.2}'
         + '.orb{width:20px;height:20px;border-radius:6px;background:linear-gradient(150deg,#5865f2,#9b8cff);box-shadow:0 0 14px rgba(124,140,255,.6);flex:none}'
-        + '.hd b{color:#fff;font-size:12px;font-weight:700;letter-spacing:.3px}.hd span{color:#9aa0c0;font-size:10px;margin-left:auto}'
+        + '.hd b{color:#fff;font-size:12px;font-weight:700;letter-spacing:.3px;flex:none;white-space:nowrap}'
+        + '.hd span{color:#9aa0c0;font-size:10px;margin-left:auto;flex:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
         + '.list{max-height:230px;overflow-y:auto;padding:6px}'
         + '.row{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 9px;border:0;border-radius:9px;background:transparent;cursor:pointer;color:#e8e9ff;transition:background .12s}'
         + '.row:hover{background:rgba(124,140,255,.16)}'
@@ -244,10 +251,19 @@ if (location.protocol === 'nova:') {
       const wrap = chipRoot.querySelector('.wrap');
       wrap.addEventListener('mouseenter', () => { chipHovered = true; });
       wrap.addEventListener('mouseleave', () => { chipHovered = false; });
+      // Klick auf den Chip darf dem Eingabefeld NICHT den Fokus nehmen — sonst schließt sich der Chip
+      // durch focusout genau im Moment des Klicks (das „blitzt kurz auf und ist weg"-Verhalten).
+      wrap.addEventListener('mousedown', (e) => e.preventDefault());
       document.documentElement.appendChild(chipHost);
     }
     function renderChip() {
       if (!chipRoot) return;
+      // Nur neu aufbauen, wenn sich wirklich etwas geändert hat. Sonst würden die Buttons bei jedem
+      // Erkennungslauf (alle ~600 ms) ersetzt → mousedown und mouseup treffen verschiedene Elemente
+      // und der Klick geht verloren („man muss mehrmals klicken").
+      const sig = (vaultLocked ? 'L|' : 'U|') + matches.map((m) => m.id + ':' + (m.username || '')).join(',');
+      if (sig === chipSig && chipRoot.querySelector('.row')) return;
+      chipSig = sig;
       const keySvg = '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2"/></svg>';
       const lockSvg = '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
       const hd = chipRoot.querySelector('.hd span');
@@ -278,7 +294,7 @@ if (location.protocol === 'nova:') {
 
     // ---- Host → Preload ----
     ipcRenderer.on('vault-offer', (_e, data) => { matches = (data && data.matches) || []; vaultLocked = !!(data && data.locked); if (chipVisible) renderChip(); });
-    ipcRenderer.on('vault-do-fill', (_e, data) => { fillActive(data); });
+    ipcRenderer.on('vault-do-fill', (_e, data) => { vaultLocked = false; chipSig = ''; fillActive(data); });
     ipcRenderer.on('vault-clear', () => { matches = []; hideChip(); });
 
     // ---- Feld-Fokus → Chip zeigen ----
