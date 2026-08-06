@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('nova', {
     refresh: invoke('ab:refresh'),
     catalog: invoke('ab:catalog'),
     onStats: on('ab:stats'),
+    onPopupBlocked: on('popup:blocked'),
   },
 
   tabs: {

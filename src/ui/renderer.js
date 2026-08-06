@@ -7280,6 +7280,17 @@ const share = (() => {
   return { toggle, open, close };
 })();
 
+/* ============================================================ Popup-Schutz: kurze Rückmeldung */
+if (window.nova.adblock && window.nova.adblock.onPopupBlocked) {
+  let popupToastAt = 0;
+  window.nova.adblock.onPopupBlocked((d) => {
+    const now = Date.now();
+    if (now - popupToastAt < 4000) return;   // bei Salven nicht zuspammen
+    popupToastAt = now;
+    toast('Werbe-Popup blockiert' + (d && d.host ? ' · ' + d.host : ''), 'i-shield');
+  });
+}
+
 /* ============================================================ Google-Login (echtes Fenster → Sitzungs-Import) */
 if (window.nova.google && window.nova.google.onStatus) {
   window.nova.google.onStatus((s) => {

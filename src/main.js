@@ -71,6 +71,8 @@ const PARTITION = 'persist:nova';
 let win = null;
 let ses = null;
 let blocker = null;
+let AdblockRequest = null;          // Request-Klasse der Adblock-Lib (für die Popup-Prüfung)
+const popupLog = new Map();         // webContentsId → { last: ts, burst: n }
 let blockingActive = false;
 let settings, bookmarks, history, securityDb;
 const tabBlockCounts = new Map(); // webContentsId -> count
@@ -95,6 +97,7 @@ let widevineState = { available: false, ready: false, status: 'wird initialisier
 const DEFAULT_SETTINGS = {
   searchEngine: 'google',
   adblockEnabled: true,
+  popupBlock: true,        // Werbe-Popups (neue Tabs beim Klick auf Player o. Ä.) abfangen
   whitelist: [],
   filterLists: null, // null => Katalog-Defaults verwenden
   customFilters: '',
@@ -282,6 +285,7 @@ async function initAdblock() {
     };
     blocker.on('request-blocked', onBlocked);
     blocker.on('request-redirected', onBlocked);
+    try { const { Request } = await import('@ghostery/adblocker'); AdblockRequest = Request; } catch {}
 
     // ---- Ausnahme-Seiten vollständig vom Cosmetic-Teil befreien ----------------------------------
     // Der Adblocker registriert ein EIGENES Preload-Script in der Session. Das haengt einen
@@ -928,6 +932,50 @@ ipcMain.on('screen:pick', (_e, payload) => {
   screenPickCb = null; screenSources.clear();
 });
 
+// ---- Popup-Schutz -------------------------------------------------------------------------------
+// Streaming-/Warez-Seiten öffnen beim ersten Klick auf den Player einen Werbe-Tab statt abzuspielen.
+// Da der Klick eine echte Nutzergeste ist, greift der Chromium-Popupblocker nicht. Wir prüfen daher
+// selbst: bekannte Werbeziele (Adblock-Engine) werden still verworfen, ebenso Popup-Salven.
+const baseDomain = (h) => { const p = String(h || '').toLowerCase().split('.'); return p.length > 2 ? p.slice(-2).join('.') : p.join('.'); };
+function isPopupAd(url, contents) {
+  if (!settings || !settings.get('popupBlock', true)) return false;
+  let openerUrl = ''; try { openerUrl = contents.getURL() || ''; } catch {}
+  let target, opener;
+  try { target = new URL(url); } catch { return false; }
+  try { opener = new URL(openerUrl); } catch { opener = null; }
+  if (!/^https?:$/.test(target.protocol)) return false;
+  const sameSite = opener && baseDomain(target.hostname) === baseDomain(opener.hostname);
+  if (sameSite) return false;                       // Popups zur eigenen Seite immer erlauben
+
+  // 1) Die Filterlisten kennen das Ziel als Werbung/Tracking → verwerfen
+  if (blocker && AdblockRequest) {
+    try {
+      const res = blocker.match(AdblockRequest.fromRawDetails({ type: 'document', url, sourceUrl: openerUrl || url }));
+      if (res && res.match) { notePopupBlocked(url, contents); return true; }
+    } catch {}
+  }
+  // 2) Popup-Salve: mehrere fremde Popups kurz hintereinander → nur das erste durchlassen
+  const now = Date.now();
+  const rec = popupLog.get(contents.id) || { last: 0, burst: 0 };
+  rec.burst = (now - rec.last < 4000) ? rec.burst + 1 : 0;
+  rec.last = now;
+  popupLog.set(contents.id, rec);
+  if (rec.burst >= 1) { notePopupBlocked(url, contents); return true; }
+  return false;
+}
+function notePopupBlocked(url, contents) {
+  try {
+    settings.set('totalBlocked', settings.get('totalBlocked', 0) + 1);
+    const tabId = contents.id;
+    tabBlockCounts.set(tabId, (tabBlockCounts.get(tabId) || 0) + 1);
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    let hosts = tabBlockHosts.get(tabId);
+    if (!hosts) { hosts = new Map(); tabBlockHosts.set(tabId, hosts); }
+    hosts.set(host, (hosts.get(host) || 0) + 1);
+    broadcast('popup:blocked', { host, url });
+  } catch {}
+}
+
 // ---------------------------------------------------------------- web contents wiring
 app.on('web-contents-created', (_e, contents) => {
   // Electron hängt pro <webview> intern Listener an WebContents — bei vielen
@@ -943,6 +991,7 @@ app.on('web-contents-created', (_e, contents) => {
     // sondern ablehnen und über den Echtbrowser anmelden + Cookies importieren (funktioniert für YT Music & Co).
     if (isGoogleAuth(url)) { googleLoginViaBrowser(); return { action: 'deny' }; }
     if (/^https?:|^about:blank/i.test(url)) {
+      if (isPopupAd(url, contents)) return { action: 'deny' };   // Werbe-Popup abfangen
       broadcast('tabs:open', { url, background: disposition === 'background-tab', openerId: contents.id });
     }
     return { action: 'deny' };
