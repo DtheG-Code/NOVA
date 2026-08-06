@@ -513,15 +513,49 @@ $('#tabstrip-new').addEventListener('click', () => createTab());
 // gedrückte Taste bewegt oder das Fenster den Fokus verliert, wird es zwangsweise entfernt.
 (function dragShieldWatchdog() {
   const shield = $('#drag-shield'); if (!shield) return;
+  let dragging = false;
   const release = () => {
+    if (dragging) return;                       // laufenden Ziehvorgang nicht stören
     if (!shield.classList.contains('hidden')) shield.classList.add('hidden');
     document.body.classList.remove('sb-resizing');
-    document.querySelectorAll('.dc-dragmask, .dc-snap').forEach((n) => n.classList.add('hidden'));
+    document.querySelectorAll('.dc-dragmask').forEach((n) => n.classList.add('hidden'));
+    // Panels, die zwar unsichtbar sind, aber noch über dem Inhalt liegen, endgültig wegräumen
+    document.querySelectorAll('.agent-stage.closing, .dc-stage.closing, .vault-stage.closing, .share-stage.closing, .wa-stage.closing')
+      .forEach((n) => { n.classList.add('hidden'); n.classList.remove('closing'); });
   };
-  window.addEventListener('mousemove', (e) => { if (e.buttons === 0) release(); }, true);
-  window.addEventListener('mouseup', () => setTimeout(release, 0), true);
-  window.addEventListener('blur', release);
-  window.addEventListener('pointercancel', release, true);
+  window.addEventListener('mousedown', () => { dragging = true; }, true);
+  window.addEventListener('mouseup', () => { dragging = false; setTimeout(release, 0); }, true);
+  window.addEventListener('mousemove', (e) => { if (e.buttons === 0) { dragging = false; release(); } }, true);
+  window.addEventListener('blur', () => { dragging = false; release(); });
+  window.addEventListener('pointercancel', () => { dragging = false; release(); }, true);
+
+  // Selbstheilung: Trifft ein Klick eines dieser Overlays, obwohl gerade nichts gezogen wird,
+  // wird es sofort entfernt und der Klick an das darunterliegende Element weitergereicht.
+  window.addEventListener('mousedown', (e) => {
+    const t = e.target; if (!t || !t.id) return;
+    if (!/^(drag-shield|dc-dragmask|wa-dragmask|vt-dragmask|sh-dragmask)$/.test(t.id)) return;
+    if (t.dataset.novaDragging === '1') return;
+    t.classList.add('hidden'); dragging = false;
+    const below = document.elementFromPoint(e.clientX, e.clientY);
+    if (below && below !== t && below.click) { try { below.click(); } catch {} }
+  }, true);
+
+  // Diagnose: Strg+Alt+D meldet, welches Element gerade unter dem Mauszeiger liegt (und kopiert es).
+  // Steht dort ein <webview>, gehen Klicks korrekt an die Seite — steht dort ein Overlay, ist es der Übeltäter.
+  let lastX = 0, lastY = 0;
+  window.addEventListener('mousemove', (e) => { lastX = e.clientX; lastY = e.clientY; }, true);
+  window.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey && e.altKey && (e.key === 'd' || e.key === 'D'))) return;
+    const el = document.elementFromPoint(lastX, lastY);
+    const nameOf = (n) => !n ? 'nichts' : n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') +
+      (typeof n.className === 'string' && n.className.trim() ? '.' + n.className.trim().split(/\s+/).join('.') : '');
+    const info = 'Unter der Maus: ' + nameOf(el)
+      + ' | Shield: ' + (shield.classList.contains('hidden') ? 'aus' : 'AKTIV')
+      + ' | Overlays: ' + ([...document.querySelectorAll('.dc-dragmask:not(.hidden), .closing')].map(nameOf).join(', ') || 'keine');
+    try { navigator.clipboard.writeText(info); } catch {}
+    console.log('[NOVA-Diagnose]', info, el);
+    toast(info.slice(0, 120), 'i-bolt');
+  });
 })();
 // Der Leerraum der oberen Tab-Leiste ist bewusst KEINE app-region:drag mehr (die würde den Mittelklick
 // schlucken). Fenster-Ziehen + Doppelklick-Maximieren daher hier selbst umsetzen.

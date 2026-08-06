@@ -1048,6 +1048,10 @@ body.split-dragging .wv-wrap { transition: none !important; }
   height: 64px;
 }
 #drag-shield { position: fixed; inset: 0; z-index: 100; cursor: col-resize; }
+/* Sich schliessende Panels sind am Animationsende unsichtbar (opacity 0), liegen aber noch ueber dem
+   Inhalt. Ohne dies wuerden sie dort Klicks schlucken, falls das Aufraeumen mal verzoegert kommt. */
+.agent-stage.closing, .dc-stage.closing, .vault-stage.closing, .share-stage.closing, .wa-stage.closing,
+.dc-snap, #snap-preview { pointer-events: none !important; }
 body.as-dragging #drag-shield { cursor: grabbing; }
 
 /* Hyperspace-Warp-Overlay (Universum-Sprung beim Seitenaufruf) */

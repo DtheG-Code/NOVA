@@ -607,8 +607,10 @@ if (location.protocol === 'nova:') {
         }
         return data;
       };
+      // NUR die Player-Antwort anfassen. /next liefert die Navigation (wird bei JEDEM Klick auf ein
+      // Video geholt) — wird sie neu zusammengebaut, reagiert YouTube auf Klicks nicht mehr.
       const isPlayerReq = (url) => typeof url === 'string' &&
-        /\/youtubei\/v1\/(player|next|reel_item_watch|get_watch)/.test(url);
+        /\/youtubei\/v1\/(player|reel_item_watch)/.test(url);
 
       // fetch() abfangen (der moderne YouTube-Client nutzt fetch)
       const origFetch = window.fetch;
@@ -621,8 +623,11 @@ if (location.protocol === 'nova:') {
           return resp.clone().text().then((txt) => {
             try {
               const data = stripAds(JSON.parse(txt));
+              // Header NICHT 1:1 uebernehmen — content-encoding/content-length der Originalantwort
+              // passen nicht mehr zum neu erzeugten Text und koennen den Client verwirren.
               return new Response(JSON.stringify(data), {
-                status: resp.status, statusText: resp.statusText, headers: resp.headers,
+                status: resp.status, statusText: resp.statusText,
+                headers: { 'content-type': 'application/json; charset=UTF-8' },
               });
             } catch (_) { return resp; }
           }).catch(() => resp);
