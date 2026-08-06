@@ -497,7 +497,9 @@ if (location.protocol === 'nova:') {
       ['contextmenu', 'copy', 'cut', 'selectstart', 'dragstart'].forEach((ev) => {
         document.addEventListener(ev, (e) => { e.stopImmediatePropagation(); }, true);
       });
-      addStyle('*{user-select:text !important;-webkit-user-select:text !important;-webkit-touch-callout:default !important}');
+      // Kein Universal-Selektor mit !important — der zwingt große Seiten bei jeder DOM-Änderung zu
+      // einer kompletten Stil-Neuberechnung. Textelemente reichen völlig.
+      addStyle('body,p,div,span,a,li,td,th,h1,h2,h3,h4,h5,h6,pre,code,article,section{user-select:text !important;-webkit-user-select:text !important;-webkit-touch-callout:default !important}');
       onReady(() => { try { document.oncontextmenu = null; document.body && (document.body.oncontextmenu = null); } catch (_) {} });
     }
 
@@ -505,27 +507,41 @@ if (location.protocol === 'nova:') {
     if (nat.cookiekill) {
       injectMainWorld(function () {
         const RX = /(accept|agree|allow|zustimmen|akzeptieren|einverstanden|alle annehmen|verstanden|ich stimme|got it|i agree|allow all|accept all)/i;
+        // WICHTIG (Performance): NUR in echten Consent-Bereichen suchen.
+        // Früher wurde jeder Button der Seite mit innerText geprüft und JEDES div/section/aside mit
+        // getComputedStyle gemessen — auf großen Seiten wie YouTube sind das zehntausende Elemente
+        // alle 0,7 s. Das blockierte den Haupt-Thread dauerhaft: die Seite blieb im Ladezustand
+        // stehen und reagierte auf keinen Klick mehr.
+        const AREA = '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],'
+          + '[id*="gdpr" i],[class*="gdpr" i],[class*="cmp" i],[aria-label*="cookie" i],[data-testid*="cookie" i]';
         const kill = () => {
-          const sel = '[id*="cookie" i] button, [class*="cookie" i] button, [id*="consent" i] button, [class*="consent" i] button, [aria-label*="accept" i], [data-testid*="accept" i], button';
-          let nodes;
-          try { nodes = document.querySelectorAll(sel); } catch (_) { return; }
-          for (const b of nodes) {
-            const t = (b.innerText || b.textContent || b.getAttribute('aria-label') || '').trim();
-            if (t && t.length < 40 && RX.test(t)) { try { b.click(); } catch (_) {} return; }
+          let areas;
+          try { areas = document.querySelectorAll(AREA); } catch (_) { return true; }
+          if (!areas.length) return false;
+          for (const area of areas) {
+            let btns;
+            try { btns = area.querySelectorAll('button,[role="button"],a'); } catch (_) { continue; }
+            for (const b of btns) {
+              // textContent statt innerText → erzwingt kein Layout
+              const t = ((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '')).trim();
+              if (t && t.length < 40 && RX.test(t)) { try { b.click(); } catch (_) {} return true; }
+            }
           }
-          // große fixe Overlays mit Cookie-Text entfernen
-          document.querySelectorAll('div,section,aside').forEach((el) => {
+          // Verbleibende fixe Consent-Overlays entfernen (nur diese Bereiche, nicht die ganze Seite)
+          for (const el of areas) {
             try {
               const cs = getComputedStyle(el);
-              if ((cs.position === 'fixed' || cs.position === 'sticky') && +cs.zIndex >= 1000 &&
-                  el.offsetHeight > 60 && /cookie|consent|datenschutz|privacy|gdpr|dsgvo/i.test(el.className + ' ' + el.id)) {
+              if ((cs.position === 'fixed' || cs.position === 'sticky') && el.offsetHeight > 60) {
                 el.remove(); document.documentElement.style.overflow = '';
+                return true;
               }
             } catch (_) {}
-          });
+          }
+          return false;
         };
-        let n = 0; const iv = setInterval(() => { kill(); if (++n > 12) clearInterval(iv); }, 700);
-        document.addEventListener('DOMContentLoaded', kill, { once: true });
+        let n = 0;
+        const iv = setInterval(() => { let done = false; try { done = kill(); } catch (_) { done = true; } if (done || ++n > 10) clearInterval(iv); }, 800);
+        document.addEventListener('DOMContentLoaded', () => { try { kill(); } catch (_) {} }, { once: true });
       });
     }
 
