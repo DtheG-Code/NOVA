@@ -283,6 +283,28 @@ async function initAdblock() {
     blocker.on('request-blocked', onBlocked);
     blocker.on('request-redirected', onBlocked);
 
+    // ---- Ausnahme-Seiten vollständig vom Cosmetic-Teil befreien ----------------------------------
+    // Der Adblocker registriert ein EIGENES Preload-Script in der Session. Das haengt einen
+    // MutationObserver ueber das gesamte DOM und schickt bei jeder Aenderung IPC-Anfragen an den
+    // Hauptprozess, um Element-Hiding und Scriptlets nachzuladen. Auf YouTube (permanente
+    // DOM-Aenderungen) erzeugt das eine IPC-Flut: die Seite bleibt im Ladezustand stehen und
+    // reagiert auf keinen Klick. Eine reine Netzwerk-Ausnahme (Whitelist) hilft dagegen NICHT —
+    // deshalb hier die Handler selbst abklemmen. Muss VOR enableBlockingInSession geschehen.
+    const cosmeticExempt = (url) => {
+      try { const h = new URL(url).hostname.toLowerCase(); return PAYMENT_ALLOW.some((d) => h === d || h.endsWith('.' + d)); }
+      catch { return false; }
+    };
+    const origInject = blocker.onInjectCosmeticFilters;
+    blocker.onInjectCosmeticFilters = async (event, url, msg) => {
+      if (cosmeticExempt(url)) return;                       // keine Filter/Scriptlets ausliefern
+      return origInject.call(blocker, event, url, msg);
+    };
+    const origMutObs = blocker.onIsMutationObserverEnabled;
+    blocker.onIsMutationObserverEnabled = async (event) => {
+      try { if (cosmeticExempt(event.sender.getURL() || '')) return false; } catch {}   // DOM-Beobachter aus
+      return origMutObs.call(blocker, event);
+    };
+
     // Eigene Filterregeln des Nutzers anwenden
     await applyCustomFilters();
 
