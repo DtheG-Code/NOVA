@@ -135,6 +135,13 @@
         <svg class="ic sec-chev"><use href="#i-chev"/></svg>
         <span>Favoriten</span>
         <span id="bm-count" class="pill-mini"></span>
+        <button class="icon-btn slim" id="bm-search-btn" title="Favoriten durchsuchen"><svg class="ic"><use href="#i-search"/></svg></button>
+        <button class="icon-btn slim" id="bm-collapse-all" title="Alle Ordner einklappen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 4l4 4 4-4M8 20l4-4 4 4M4 12h16"/></svg></button>
+      </div>
+      <div id="bm-search" class="hidden">
+        <svg class="ic dim"><use href="#i-search"/></svg>
+        <input id="bm-search-input" type="text" placeholder="Favoriten durchsuchen …" spellcheck="false" />
+        <button class="icon-btn slim" id="bm-search-close" title="Suche schließen"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
       <div id="bookmark-tree"></div>
     </div>
@@ -722,14 +729,45 @@
 <div id="vt-master-dlg" class="vt-dlg hidden" aria-hidden="true">
   <div class="vt-dlg-card">
     <div class="vt-dlg-aura"></div>
-    <div class="vt-dlg-head"><b>Master-Passwort ändern</b><button id="vt-md-x" class="vt-gen-xbtn"><svg class="ic"><use href="#i-x"/></svg></button></div>
+    <div class="vt-dlg-head"><b>Tresor-Einstellungen</b><button id="vt-md-x" class="vt-gen-xbtn"><svg class="ic"><use href="#i-x"/></svg></button></div>
     <div class="vt-dlg-body">
+      <div class="vt-dlg-sec">Master-Passwort ändern</div>
       <input type="password" id="vt-md-old" class="vt-in" placeholder="Aktuelles Master-Passwort" autocomplete="off">
       <input type="password" id="vt-md-new" class="vt-in" placeholder="Neues Master-Passwort" autocomplete="new-password">
       <input type="password" id="vt-md-new2" class="vt-in" placeholder="Neu bestätigen" autocomplete="new-password">
       <div class="vt-lock-msg" id="vt-md-msg"></div>
+      <div class="vt-dlg-sep"></div>
+      <div class="vt-dlg-sec">Schnell-PIN <span id="vt-pin-state" class="vt-pin-state">nicht eingerichtet</span></div>
+      <p class="vt-dlg-hint">Mit einer PIN entsperrst du den Tresor beim Ausfüllen schneller. Sie gilt nur auf diesem Gerät und wird nach 5 Fehlversuchen deaktiviert.</p>
+      <div class="sh-ud-row">
+        <input type="password" id="vt-pin-input" class="vt-in" inputmode="numeric" placeholder="PIN (4–12 Ziffern)" autocomplete="off">
+        <button id="vt-pin-save" class="vt-btn go vt-btn-sm">Setzen</button>
+        <button id="vt-pin-remove" class="vt-btn ghost vt-btn-sm">Entfernen</button>
+      </div>
+      <div class="vt-lock-msg" id="vt-pin-msg"></div>
     </div>
     <div class="vt-dlg-foot"><button id="vt-md-cancel" class="vt-btn ghost">Abbrechen</button><button id="vt-md-save" class="vt-btn go">Ändern</button></div>
+  </div>
+</div>
+
+<!-- Schnell-Entsperren (beim Autofill: Master-Passwort ODER PIN) -->
+<div id="vt-quick" class="vt-dlg hidden" aria-hidden="true">
+  <div class="vt-dlg-card vt-quick-card">
+    <div class="vt-dlg-aura"></div>
+    <div class="vt-quick-head">
+      <span class="vt-quick-lock"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span>
+      <div class="vt-quick-tx"><b>Tresor entsperren</b><span id="vt-quick-sub">zum Ausfüllen benötigt</span></div>
+      <button id="vt-quick-x" class="vt-gen-xbtn"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="vt-quick-tabs">
+      <button class="vt-quick-tab active" data-mode="pin" id="vt-quick-tab-pin">PIN</button>
+      <button class="vt-quick-tab" data-mode="master" id="vt-quick-tab-master">Master-Passwort</button>
+    </div>
+    <form id="vt-quick-form" autocomplete="off">
+      <input id="vt-quick-input" class="vt-in vt-quick-input" type="password" inputmode="numeric" placeholder="PIN eingeben" autocomplete="off" spellcheck="false">
+      <div class="vt-lock-msg" id="vt-quick-msg"></div>
+      <button type="submit" class="vt-btn go" id="vt-quick-go">Entsperren &amp; ausfüllen</button>
+    </form>
   </div>
 </div>
 

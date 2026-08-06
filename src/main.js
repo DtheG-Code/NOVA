@@ -27,11 +27,21 @@ app.setName('Nova Browser');
 // unabhängig von Entwickler-/Bestandsprofilen. Sonst normales AppData-Profil.
 try {
   const portMarker = path.join(path.dirname(process.execPath), 'NOVA.portable');
+  const appDataProfile = path.join(app.getPath('appData'), 'NovaBrowser');
+  let target = appDataProfile;
   if (fs.existsSync(portMarker)) {
-    app.setPath('userData', path.join(path.dirname(process.execPath), 'NovaData'));
-  } else {
-    app.setPath('userData', path.join(app.getPath('appData'), 'NovaBrowser'));
+    // Portables Profil NUR nutzen, wenn der Ordner wirklich beschreibbar ist. Liegt NOVA z. B. in
+    // "C:\Program Files", ist er es ohne Admin nicht → früher startete NOVA dort nur als Administrator.
+    // Jetzt: still auf das normale AppData-Profil ausweichen, damit NOVA immer ohne Admin läuft.
+    const portableProfile = path.join(path.dirname(process.execPath), 'NovaData');
+    try {
+      fs.mkdirSync(portableProfile, { recursive: true });
+      const probe = path.join(portableProfile, '.writetest');
+      fs.writeFileSync(probe, 'ok'); fs.unlinkSync(probe);
+      target = portableProfile;
+    } catch { target = appDataProfile; }
   }
+  app.setPath('userData', target);
 } catch {
   app.setPath('userData', path.join(app.getPath('appData'), 'NovaBrowser'));
 }
@@ -1253,6 +1263,20 @@ ipcMain.on('win:min', () => win?.minimize());
 ipcMain.on('win:max', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()));
 ipcMain.on('win:close', () => win?.close());
 ipcMain.on('win:fullscreen', () => win?.setFullScreen(!win.isFullScreen()));
+// Manuelles Fenster-Ziehen: Der Leerraum der Tab-Leiste darf KEINE app-region:drag sein (die schluckt
+// alle Mausklicks, u. a. den Mittelklick für „neuer Tab"). Stattdessen ziehen wir das Fenster selbst.
+let dragOrigin = null;
+ipcMain.on('win:dragStart', () => {
+  if (!win) return;
+  if (win.isMaximized()) { dragOrigin = null; return; }   // maximiert nicht verschieben
+  const [x, y] = win.getPosition();
+  dragOrigin = { x, y };
+});
+ipcMain.on('win:dragMove', (_e, d) => {
+  if (!win || !dragOrigin || !d) return;
+  try { win.setPosition(Math.round(dragOrigin.x + (d.dx || 0)), Math.round(dragOrigin.y + (d.dy || 0))); } catch {}
+});
+ipcMain.on('win:dragEnd', () => { dragOrigin = null; });
 
 // Einstellungen
 ipcMain.handle('settings:set', (_e, patch) => {
@@ -1732,6 +1756,13 @@ ipcMain.handle('bm:setOpen', (_e, { id, open }) => {
   bookmarks.set('tree', tree);
   return true;
 });
+// Alle Favoriten-Ordner auf einmal ein-/ausklappen (Übersicht bei vielen importierten Ordnern)
+ipcMain.handle('bm:setAllOpen', (_e, open) => {
+  const tree = bookmarks.get('tree', []);
+  walkBookmarks(tree, (n) => { if (n.type === 'folder') n.open = !!open; });
+  bookmarks.set('tree', tree);
+  return tree;
+});
 ipcMain.handle('bm:find', (_e, url) => findBookmarkByUrl(url));
 ipcMain.handle('bm:createFolder', (_e, { name, parentId }) => {
   const tree = bookmarks.get('tree', []);
@@ -2177,7 +2208,60 @@ function vaultPersist() {
   const tmp = VAULT_PATH + '.tmp';
   fs.writeFileSync(tmp, buf, { mode: 0o600 });
   fs.renameSync(tmp, VAULT_PATH);
+  vaultWriteIndex();
 }
+
+// ---- Host-Index: erlaubt „für diese Seite gibt es ein Passwort" OHNE den Tresor zu entsperren.
+// Enthält NUR Host/Titel/Benutzername (keine Passwörter) und ist mit dem OS-Schlüssel (safeStorage,
+// geräte- und kontogebunden) verschlüsselt. Passwörter bleiben ausschließlich im Master-verschlüsselten Tresor.
+const VAULT_IDX_PATH = path.join(app.getPath('userData'), 'vault.idx');
+function vaultWriteIndex() {
+  try {
+    if (!vaultUnlocked()) return;
+    const list = vaultData.entries.map((e) => ({ id: e.id, host: vaultHost(e.url), url: e.url, title: e.title, username: e.username }));
+    let payload = Buffer.from(JSON.stringify(list), 'utf8');
+    let os = false;
+    try { if (vaultOsAvailable()) { payload = safeStorage.encryptString(payload.toString('base64')); os = true; } } catch { os = false; }
+    fs.writeFileSync(VAULT_IDX_PATH, JSON.stringify({ os, data: payload.toString('base64') }), { mode: 0o600 });
+  } catch {}
+}
+function vaultReadIndex() {
+  try {
+    const f = JSON.parse(fs.readFileSync(VAULT_IDX_PATH, 'utf8'));
+    let raw;
+    if (f.os) {
+      if (!vaultOsAvailable()) return [];
+      raw = Buffer.from(safeStorage.decryptString(Buffer.from(f.data, 'base64')), 'base64');
+    } else raw = Buffer.from(f.data, 'base64');
+    const arr = JSON.parse(raw.toString('utf8'));
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+// ---- Schnellentsperrung per PIN: der Master-Key wird mit einem aus der PIN abgeleiteten Schlüssel
+// verschlüsselt und zusätzlich mit dem OS-Schlüssel (safeStorage) an dieses Gerät/Konto gebunden.
+// Fehlversuche sind limitiert — danach wird die PIN-Entsperrung gelöscht (nur noch Master-Passwort).
+const VAULT_PIN_PATH = path.join(app.getPath('userData'), 'vault.pin');
+const PIN_KDF = { N: 1 << 15, r: 8, p: 1, maxmem: 96 * 1024 * 1024 };
+const PIN_MAX_FAILS = 5;
+const vaultHasPin = () => { try { return fs.existsSync(VAULT_PIN_PATH); } catch { return false; } };
+const derivePinKey = (pin, salt) => crypto.scryptSync(Buffer.from(String(pin), 'utf8'), salt, 32, PIN_KDF);
+function vaultReadPinFile() {
+  const f = JSON.parse(fs.readFileSync(VAULT_PIN_PATH, 'utf8'));
+  let inner;
+  if (f.os) {
+    if (!vaultOsAvailable()) throw new Error('no_os_key');
+    inner = JSON.parse(Buffer.from(safeStorage.decryptString(Buffer.from(f.data, 'base64')), 'base64').toString('utf8'));
+  } else inner = JSON.parse(Buffer.from(f.data, 'base64').toString('utf8'));
+  return { file: f, inner };
+}
+function vaultWritePinFile(inner, fails) {
+  let payload = Buffer.from(JSON.stringify(inner), 'utf8');
+  let os = false;
+  try { if (vaultOsAvailable()) { payload = safeStorage.encryptString(payload.toString('base64')); os = true; } } catch { os = false; }
+  fs.writeFileSync(VAULT_PIN_PATH, JSON.stringify({ os, fails: fails || 0, data: payload.toString('base64') }), { mode: 0o600 });
+}
+const vaultRemovePin = () => { try { fs.unlinkSync(VAULT_PIN_PATH); } catch {} };
 const vaultHost = (u) => { try { return new URL(/^https?:/i.test(u) ? u : 'https://' + u).hostname.replace(/^www\./, '').toLowerCase(); } catch { return String(u || '').toLowerCase().replace(/^www\./, ''); } };
 function vaultOriginMatch(entryUrl, origin) {
   const eh = vaultHost(entryUrl), h = vaultHost(origin);
@@ -2200,7 +2284,7 @@ function vaultGenerate(opts) {
   return out.join('');
 }
 
-ipcMain.handle('vault:status', () => ({ exists: vaultExists(), unlocked: vaultUnlocked(), osLayer: vaultOsAvailable() }));
+ipcMain.handle('vault:status', () => ({ exists: vaultExists(), unlocked: vaultUnlocked(), osLayer: vaultOsAvailable(), hasPin: vaultHasPin() }));
 ipcMain.handle('vault:create', (_e, password) => {
   try {
     if (vaultExists()) return { ok: false, error: 'exists' };
@@ -2223,6 +2307,55 @@ ipcMain.handle('vault:unlock', async (_e, password) => {
     vaultFailCount = 0;
     vaultKey = res.key; vaultSalt = res.salt;
     vaultData = res.obj && Array.isArray(res.obj.entries) ? res.obj : { entries: [] };
+    vaultWriteIndex();   // Host-Index aktuell halten (auch für bestehende Tresore ohne Index)
+    vaultTouch();
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// PIN einrichten/entfernen/entsperren
+ipcMain.handle('vault:setPin', (_e, pin) => {
+  try {
+    if (!vaultUnlocked()) return { ok: false, locked: true };
+    if (!/^\d{4,12}$/.test(String(pin || ''))) return { ok: false, error: 'bad_pin' };
+    const salt = crypto.randomBytes(32);
+    const key = derivePinKey(pin, salt);
+    const iv = crypto.randomBytes(12);
+    const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ct = Buffer.concat([c.update(vaultKey), c.final()]);
+    vaultWritePinFile({ v: 1, salt: salt.toString('base64'), iv: iv.toString('base64'), ct: ct.toString('base64'), tag: c.getAuthTag().toString('base64') }, 0);
+    try { key.fill(0); } catch {}
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('vault:removePin', () => { vaultRemovePin(); return { ok: true }; });
+ipcMain.handle('vault:unlockPin', (_e, pin) => {
+  try {
+    if (!vaultHasPin()) return { ok: false, error: 'no_pin' };
+    if (!vaultExists()) return { ok: false, error: 'none' };
+    const { file, inner } = vaultReadPinFile();
+    const fails = Number(file.fails) || 0;
+    if (fails >= PIN_MAX_FAILS) { vaultRemovePin(); return { ok: false, error: 'pin_disabled' }; }
+    let key;
+    try {
+      key = derivePinKey(pin, Buffer.from(inner.salt, 'base64'));
+      const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(inner.iv, 'base64'));
+      d.setAuthTag(Buffer.from(inner.tag, 'base64'));
+      var master = Buffer.concat([d.update(Buffer.from(inner.ct, 'base64')), d.final()]);   // wirft bei falscher PIN
+    } catch {
+      const left = PIN_MAX_FAILS - (fails + 1);
+      if (left <= 0) { vaultRemovePin(); return { ok: false, error: 'pin_disabled' }; }
+      vaultWritePinFile(inner, fails + 1);
+      return { ok: false, error: 'wrong', left };
+    } finally { try { key && key.fill(0); } catch {} }
+    // Master-Key steht → Tresorinhalt damit entschlüsseln
+    const fileInner = vaultReadInner();
+    const dec = crypto.createDecipheriv('aes-256-gcm', master, Buffer.from(fileInner.iv, 'base64'));
+    dec.setAuthTag(Buffer.from(fileInner.tag, 'base64'));
+    const pt = Buffer.concat([dec.update(Buffer.from(fileInner.ct, 'base64')), dec.final()]);
+    const obj = JSON.parse(pt.toString('utf8'));
+    vaultKey = master; vaultSalt = Buffer.from(fileInner.salt, 'base64');
+    vaultData = obj && Array.isArray(obj.entries) ? obj : { entries: [] };
+    if (fails) vaultWritePinFile(inner, 0);
     vaultTouch();
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -2269,7 +2402,13 @@ ipcMain.handle('vault:delete', (_e, id) => {
   return { ok: true };
 });
 ipcMain.handle('vault:match', (_e, origin) => {
-  if (!vaultUnlocked()) return { ok: false, locked: true };
+  // Gesperrt: aus dem Host-Index antworten → NOVA kann anzeigen „hier gibt es ein Passwort",
+  // ohne den Tresor zu entsperren. Entsperrt wird erst beim tatsächlichen Ausfüllen verlangt.
+  if (!vaultUnlocked()) {
+    const items = vaultReadIndex().filter((e) => vaultOriginMatch(e.url || e.host, origin))
+      .map((e) => ({ id: e.id, title: e.title, username: e.username }));
+    return { ok: true, locked: true, items };
+  }
   vaultTouch();
   return { ok: true, items: vaultData.entries.filter((e) => vaultOriginMatch(e.url, origin)).map((e) => ({ id: e.id, title: e.title, username: e.username })) };
 });
@@ -2354,8 +2493,9 @@ ipcMain.handle('vault:changeMaster', (_e, oldPw, newPw) => {
     const salt = crypto.randomBytes(32), newKey = deriveKey(newPw, salt);
     try { if (Buffer.isBuffer(vaultKey)) vaultKey.fill(0); } catch {}
     vaultKey = newKey; vaultSalt = salt;
+    vaultRemovePin();   // alter PIN-Blob enthält den alten Schlüssel → ungültig, PIN muss neu gesetzt werden
     vaultPersist(); vaultTouch();
-    return { ok: true };
+    return { ok: true, pinCleared: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle('vault:copy', (_e, id, field) => {

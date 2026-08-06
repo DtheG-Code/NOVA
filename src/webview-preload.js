@@ -157,6 +157,7 @@ if (location.protocol === 'nova:') {
   (function novaVaultAutofill() {
     const origin = location.origin || (location.protocol + '//' + location.host);
     let matches = [];            // vom Host: [{id,title,username}] — NIE Passwörter
+    let vaultLocked = false;     // Tresor gesperrt? → Vorschlag wird trotzdem angezeigt, Entsperren erst beim Klick
     let groups = [];             // erkannte Login-Gruppen [{user,pass,form}]
     let activeGroup = null, chipAnchor = null, chipHost = null, chipRoot = null, chipVisible = false, chipHovered = false;
 
@@ -248,8 +249,11 @@ if (location.protocol === 'nova:') {
     function renderChip() {
       if (!chipRoot) return;
       const keySvg = '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M16 7l3 3M14 9l2 2"/></svg>';
+      const lockSvg = '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
+      const hd = chipRoot.querySelector('.hd span');
+      if (hd) hd.textContent = vaultLocked ? 'Klick zum Entsperren' : 'automatisch ausfüllen';
       chipRoot.querySelector('.list').innerHTML = matches.map((m) =>
-        '<button class="row" data-id="' + esc(m.id) + '"><span class="key">' + keySvg + '</span>'
+        '<button class="row" data-id="' + esc(m.id) + '"><span class="key">' + (vaultLocked ? lockSvg : keySvg) + '</span>'
         + '<span class="tx"><b>' + esc(m.title || origin) + '</b><i>' + esc(m.username || '—') + '</i></span></button>').join('');
       chipRoot.querySelectorAll('.row').forEach((b) => b.addEventListener('click', () => requestFill(b.getAttribute('data-id'))));
     }
@@ -273,7 +277,7 @@ if (location.protocol === 'nova:') {
     }
 
     // ---- Host → Preload ----
-    ipcRenderer.on('vault-offer', (_e, data) => { matches = (data && data.matches) || []; if (chipVisible) renderChip(); });
+    ipcRenderer.on('vault-offer', (_e, data) => { matches = (data && data.matches) || []; vaultLocked = !!(data && data.locked); if (chipVisible) renderChip(); });
     ipcRenderer.on('vault-do-fill', (_e, data) => { fillActive(data); });
     ipcRenderer.on('vault-clear', () => { matches = []; hideChip(); });
 

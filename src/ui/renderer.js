@@ -506,6 +506,31 @@ $('#tabstrip-new').addEventListener('click', () => createTab());
     createTab();
   });
 });
+// Der Leerraum der oberen Tab-Leiste ist bewusst KEINE app-region:drag mehr (die würde den Mittelklick
+// schlucken). Fenster-Ziehen + Doppelklick-Maximieren daher hier selbst umsetzen.
+(function setupTabstripFreeArea() {
+  const strip = $('#tabstrip-tabs'); if (!strip) return;
+  const isFree = (t) => !(t.closest && (t.closest('.tab') || t.closest('button')));
+  strip.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 || !isFree(e.target)) return;
+    const sx = e.screenX, sy = e.screenY;
+    let dragging = false;
+    const onMove = (ev) => {
+      const dx = ev.screenX - sx, dy = ev.screenY - sy;
+      if (!dragging) {
+        if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;   // erst ab echter Bewegung ziehen
+        dragging = true; window.nova.win.dragStart();
+      }
+      window.nova.win.dragMove({ dx, dy });
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
+      if (dragging) window.nova.win.dragEnd();
+    };
+    window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
+  });
+  strip.addEventListener('dblclick', (e) => { if (isFree(e.target)) window.nova.win.max(); });
+})();
 
 // Zeigt unten an, wie viele Tabs außerhalb des sichtbaren Bereichs liegen.
 function updateTabOverflow() {
@@ -1329,12 +1354,44 @@ function wireBmDnD(row, node) {
   });
 }
 
+let bmSearch = '';   // dedizierte Favoriten-Suche (Such-Icon im Favoriten-Kopf)
 function renderBookmarks() {
   const tree = $('#bookmark-tree');
   tree.innerHTML = '';
   let count = 0;
   walkTree(state.bookmarks, (n) => { if (n.type === 'url') count++; });
   $('#bm-count').textContent = count.toLocaleString('de-DE');
+
+  // Favoriten-Suche: flache Trefferliste über ALLE Ordner, mit Ordnerpfad als Hinweis
+  if (bmSearch) {
+    const q = bmSearch.toLowerCase();
+    const hits = [];
+    const scan = (nodes, trail) => {
+      for (const n of nodes || []) {
+        if (n.type === 'folder') scan(n.children, trail.concat(n.name));
+        else if (hits.length < 300 && ((n.name || '').toLowerCase().includes(q) || (n.url || '').toLowerCase().includes(q))) {
+          hits.push({ node: n, path: trail.join(' / ') });
+        }
+      }
+    };
+    scan(state.bookmarks, []);
+    $('#bm-count').textContent = hits.length.toLocaleString('de-DE');
+    if (!hits.length) { tree.appendChild(el('div', 'wl-empty', 'Keine Favoriten gefunden')); return; }
+    for (const h of hits) {
+      const row = el('div', 'bm-row bm-hit');
+      row.appendChild(faviconEl(h.node.url, 'bm-fav'));
+      const tx = el('div', 'bm-hit-tx');
+      tx.appendChild(el('span', 'bm-name', h.node.name));
+      tx.appendChild(el('span', 'bm-hit-path', h.path || 'Sonstige'));
+      row.appendChild(tx);
+      row.title = h.node.url;
+      row.addEventListener('click', () => navigate(activeTab(), h.node.url));
+      row.addEventListener('auxclick', (e) => { if (e.button === 1) createTab(h.node.url, { background: true }); });
+      row.addEventListener('contextmenu', (e) => bookmarkCtxMenu(e, h.node));
+      tree.appendChild(row);
+    }
+    return;
+  }
 
   // Filtermodus: flache Trefferliste statt Baum
   if (currentFilter) {
@@ -1381,7 +1438,8 @@ function renderBookmarks() {
         row.addEventListener('click', () => {
           node.open = !node.open;
           row.classList.toggle('open', node.open);
-          window.nova.bookmarks.setOpen({ id: node.id, open: node.open });
+          if (node._virtual) { try { state.settings.bmMiscOpen = node.open; window.nova.settings.set({ bmMiscOpen: node.open }); } catch {} }
+          else window.nova.bookmarks.setOpen({ id: node.id, open: node.open });
           if (node.open) {
             childBox.innerHTML = '';
             build(node.children || [], childBox);
@@ -1390,8 +1448,10 @@ function renderBookmarks() {
             childBox.style.display = 'none';
           }
         });
-        row.addEventListener('contextmenu', (e) => bookmarkCtxMenu(e, node));
-        wireBmDnD(row, node);
+        if (!node._virtual) {   // „Sonstige" ist nur eine Ansicht — kein Umbenennen/Verschieben darauf
+          row.addEventListener('contextmenu', (e) => bookmarkCtxMenu(e, node));
+          wireBmDnD(row, node);
+        }
       } else {
         const row = el('div', 'bm-row');
         row.appendChild(faviconEl(node.url, 'bm-fav'));
@@ -1405,7 +1465,14 @@ function renderBookmarks() {
       }
     }
   };
-  build(state.bookmarks, tree);
+  // Lose Favoriten (ohne Ordner) sammeln sich in einem automatischen Ordner „Sonstige" → aufgeräumte Liste
+  const roots = state.bookmarks || [];
+  const loose = roots.filter((n) => n.type !== 'folder');
+  const view = roots.filter((n) => n.type === 'folder');
+  if (loose.length) {
+    view.push({ id: '__misc__', type: 'folder', name: 'Sonstige', _virtual: true, open: !!(state.settings && state.settings.bmMiscOpen), children: loose });
+  }
+  build(view, tree);
 }
 
 function bookmarkCtxMenu(e, node) {
@@ -2609,6 +2676,31 @@ function setupSidebarResize() {
 $('#bm-head').addEventListener('click', () => {
   const collapsed = $('#sidebar').classList.toggle('bm-collapsed');
   window.nova.settings.set({ bmCollapsed: collapsed });
+});
+// ---- Favoriten: Suche + alle Ordner einklappen ----
+function bmSearchToggle(on) {
+  const box = $('#bm-search'), inp = $('#bm-search-input');
+  box.classList.toggle('hidden', !on);
+  $('#bm-search-btn').classList.toggle('active', !!on);
+  if (on) { $('#sidebar').classList.remove('bm-collapsed'); setTimeout(() => inp.focus(), 40); }
+  else { inp.value = ''; bmSearch = ''; renderBookmarks(); }
+}
+$('#bm-search-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  bmSearchToggle($('#bm-search').classList.contains('hidden'));
+});
+$('#bm-search-close').addEventListener('click', (e) => { e.stopPropagation(); bmSearchToggle(false); });
+$('#bm-search-input').addEventListener('input', (e) => { bmSearch = e.target.value.trim(); renderBookmarks(); });
+$('#bm-search-input').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); bmSearchToggle(false); } });
+$('#bm-collapse-all').addEventListener('click', async (e) => {
+  e.stopPropagation();
+  try {
+    const tree = await window.nova.bookmarks.setAllOpen(false);
+    if (Array.isArray(tree)) state.bookmarks = tree;
+    try { state.settings.bmMiscOpen = false; window.nova.settings.set({ bmMiscOpen: false }); } catch {}
+    renderBookmarks();
+    toast('Alle Favoriten-Ordner eingeklappt', 'i-check');
+  } catch {}
 });
 $('#btn-sidebar').addEventListener('click', toggleSidebar);
 $('#btn-newtab').addEventListener('click', () => createTab());
@@ -6698,13 +6790,20 @@ const vault = (() => {
     try {
       if (channel === 'vault-detect') {
         if (!data || !data.hasLogin) { try { wv.send('vault-clear'); } catch {} return; }
+        // match liefert auch bei GESPERRTEM Tresor Treffer (aus dem Host-Index) → Vorschlag wird immer angezeigt
         const r = await V.match(data.origin);
-        if (r.ok && r.items && r.items.length) { try { wv.send('vault-offer', { matches: r.items }); } catch {} }
+        if (r.ok && r.items && r.items.length) { try { wv.send('vault-offer', { matches: r.items, locked: !!r.locked }); } catch {} }
         else { try { wv.send('vault-clear'); } catch {} }
       } else if (channel === 'vault-fill-request') {
-        if (!data) return; const r = await V.fill(data.id, data.origin);
+        if (!data) return;
+        let r = await V.fill(data.id, data.origin);
+        if (r.locked) {                                   // erst beim Ausfüllen entsperren (PIN oder Master)
+          const ok = await quickUnlock();
+          if (!ok) return;
+          r = await V.fill(data.id, data.origin);
+        }
         if (r.ok) { try { wv.send('vault-do-fill', { username: r.username, password: r.password }); } catch {} }
-        else if (r.locked) { toast('Tresor entsperren, um auszufüllen', 'i-warn'); }
+        else if (r.error === 'origin') toast('Eintrag gehört zu einer anderen Seite', 'i-warn');
       } else if (channel === 'vault-save-offer') {
         offerSave(data);
       }
@@ -6743,6 +6842,58 @@ const vault = (() => {
   function startTimer() { if (timerIv) clearInterval(timerIv); tickTimer(); timerIv = setInterval(tickTimer, 1000); }
   function stopTimer() { if (timerIv) { clearInterval(timerIv); timerIv = null; } const pill = $('#vt-timer'); if (pill) pill.classList.add('hidden'); }
   function keepalive() { const now = Date.now(); if (now - lastKeep < 18000) return; lastKeep = now; V.keepalive().then((r) => { if (r && r.ok) { lockAt = r.at || 0; } }).catch(() => {}); }
+
+  // ---------------- Schnell-Entsperren beim Autofill (PIN ODER Master-Passwort) ----------------
+  let quickResolve = null, quickMode = 'pin';
+  function setQuickMode(m) {
+    quickMode = m;
+    document.querySelectorAll('.vt-quick-tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
+    const inp = $('#vt-quick-input');
+    inp.placeholder = m === 'pin' ? 'PIN eingeben' : 'Master-Passwort';
+    inp.value = '';
+    setTimeout(() => { try { inp.focus(); } catch {} }, 40);
+  }
+  function closeQuick(ok) {
+    $('#vt-quick').classList.add('hidden');
+    $('#vt-quick-input').value = '';
+    const r = quickResolve; quickResolve = null;
+    if (r) r(!!ok);
+  }
+  async function quickUnlock() {
+    const s = await syncStatus();
+    if (s.unlocked) { unlocked = true; return true; }
+    const hasPin = !!s.hasPin;
+    $('#vt-quick-tab-pin').classList.toggle('hidden', !hasPin);
+    $('#vt-quick-msg').textContent = '';
+    setQuickMode(hasPin ? 'pin' : 'master');
+    $('#vt-quick').classList.remove('hidden');
+    return new Promise((res) => { quickResolve = res; });
+  }
+  $('#vt-quick-x').addEventListener('click', () => closeQuick(false));
+  $('#vt-quick').addEventListener('mousedown', (e) => { if (e.target === $('#vt-quick')) closeQuick(false); });
+  document.querySelectorAll('.vt-quick-tab').forEach((b) => b.addEventListener('click', () => setQuickMode(b.dataset.mode)));
+  $('#vt-quick-input').addEventListener('keydown', (e) => { if (e.key === 'Escape') closeQuick(false); });
+  $('#vt-quick-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const val = $('#vt-quick-input').value, msg = $('#vt-quick-msg'), go = $('#vt-quick-go');
+    if (!val) return;
+    go.disabled = true; msg.textContent = '';
+    const r = quickMode === 'pin' ? await V.unlockPin(val) : await V.unlock(val);
+    go.disabled = false;
+    if (r.ok) {
+      unlocked = true;
+      if (mode) showScreen(); else updateChrome();
+      closeQuick(true);
+      return;
+    }
+    $('#vt-quick-input').value = '';
+    msg.textContent = r.error === 'wrong' ? (quickMode === 'pin' ? `PIN falsch${typeof r.left === 'number' ? ` — noch ${r.left} Versuche` : ''}` : 'Falsches Master-Passwort.')
+      : r.error === 'pin_disabled' ? 'PIN deaktiviert (zu viele Fehlversuche) — bitte Master-Passwort nutzen.'
+      : r.error === 'no_pin' ? 'Keine PIN eingerichtet.' : 'Entsperren fehlgeschlagen.';
+    if (r.error === 'pin_disabled') { $('#vt-quick-tab-pin').classList.add('hidden'); setQuickMode('master'); }
+    const card = $('#vt-quick').querySelector('.vt-quick-card');
+    card.classList.add('vt-shake'); setTimeout(() => card.classList.remove('vt-shake'), 500);
+  });
 
   // ---------------- Verkabelung ----------------
   $('#vt-lock-form').addEventListener('submit', async (ev) => {
@@ -6792,7 +6943,29 @@ const vault = (() => {
     else { const v = field === 'password' ? $('#vt-f-pass').value : $('#vt-f-user').value; try { await navigator.clipboard.writeText(v); toast('Kopiert', 'i-check'); } catch {} }
   }));
   // Master-Passwort ändern
-  $('#vt-settings').addEventListener('click', () => { $('#vt-md-old').value = ''; $('#vt-md-new').value = ''; $('#vt-md-new2').value = ''; $('#vt-md-msg').textContent = ''; $('#vt-master-dlg').classList.remove('hidden'); });
+  async function refreshPinState() {
+    const s = await syncStatus();
+    const el2 = $('#vt-pin-state');
+    if (el2) { el2.textContent = s.hasPin ? 'aktiv' : 'nicht eingerichtet'; el2.classList.toggle('on', !!s.hasPin); }
+    const rm = $('#vt-pin-remove'); if (rm) rm.classList.toggle('hidden', !s.hasPin);
+  }
+  $('#vt-settings').addEventListener('click', () => {
+    $('#vt-md-old').value = ''; $('#vt-md-new').value = ''; $('#vt-md-new2').value = ''; $('#vt-md-msg').textContent = '';
+    $('#vt-pin-input').value = ''; $('#vt-pin-msg').textContent = '';
+    refreshPinState();
+    $('#vt-master-dlg').classList.remove('hidden');
+  });
+  $('#vt-pin-save').addEventListener('click', async () => {
+    const pin = $('#vt-pin-input').value.trim(), msg = $('#vt-pin-msg');
+    if (!/^\d{4,12}$/.test(pin)) { msg.textContent = 'PIN muss aus 4–12 Ziffern bestehen.'; return; }
+    const r = await V.setPin(pin);
+    if (!r.ok) { msg.textContent = r.locked ? 'Tresor ist gesperrt.' : 'PIN konnte nicht gesetzt werden.'; return; }
+    $('#vt-pin-input').value = ''; msg.textContent = '';
+    refreshPinState(); toast('Schnell-PIN eingerichtet', 'i-check');
+  });
+  $('#vt-pin-remove').addEventListener('click', async () => {
+    await V.removePin(); refreshPinState(); toast('Schnell-PIN entfernt', 'i-check');
+  });
   $('#vt-md-x').addEventListener('click', () => $('#vt-master-dlg').classList.add('hidden'));
   $('#vt-md-cancel').addEventListener('click', () => $('#vt-master-dlg').classList.add('hidden'));
   $('#vt-md-save').addEventListener('click', async () => {
@@ -6801,7 +6974,8 @@ const vault = (() => {
     if (n !== n2) { msg.textContent = 'Neue Passwörter stimmen nicht überein.'; return; }
     const r = await V.changeMaster(o, n);
     if (!r.ok) { msg.textContent = r.error === 'wrong' ? 'Aktuelles Passwort falsch.' : 'Änderung fehlgeschlagen.'; return; }
-    $('#vt-master-dlg').classList.add('hidden'); toast('Master-Passwort geändert', 'i-check');
+    $('#vt-master-dlg').classList.add('hidden');
+    toast(r.pinCleared ? 'Master-Passwort geändert — PIN bitte neu setzen' : 'Master-Passwort geändert', 'i-check');
   });
   // Speichern-Angebot
   $('#vs-no').addEventListener('click', () => { $('#vault-save').classList.add('hidden'); saveOfferData = null; });
@@ -7088,6 +7262,16 @@ if (window.nova.google && window.nova.google.onStatus) {
   if (data.isMaximized) $('#win-max-ic').querySelector('use').setAttribute('href', '#i-restore');
 
   renderBookmarks();
+  // Einmalig nach dem Update: alle importierten Favoriten-Ordner einklappen (waren alle offen = unübersichtlich)
+  if (!state.settings.bmCollapsedOnce) {
+    try {
+      const t = await window.nova.bookmarks.setAllOpen(false);
+      if (Array.isArray(t)) state.bookmarks = t;
+      state.settings.bmCollapsedOnce = true;
+      window.nova.settings.set({ bmCollapsedOnce: true });
+      renderBookmarks();
+    } catch {}
+  }
   syncShieldBadge();
   teEdit.apply();
   extActions.refresh();
