@@ -76,8 +76,14 @@ let settings, bookmarks, history, securityDb;
 const tabBlockCounts = new Map(); // webContentsId -> count
 const tabBlockHosts = new Map(); // webContentsId -> Map(host -> count)
 const whitelistFilters = new Map(); // host -> filter[]
-// Seiten, die bei blockierten Skripten den Zugriff sperren (Betrugs-/Bot-Erkennung) → immer ungefiltert
+// Seiten, die NIE gefiltert werden:
+//  • YouTube: NOVA entfernt die Werbung bereits an der QUELLE (adPlacements aus der Player-Antwort,
+//    siehe webview-preload). Zusätzliches Netzwerk-Blocking + Cosmetic-Filter arbeiten dagegen und
+//    zerlegen YouTubes Skripte — Folge: Seite lädt, aber nichts ist mehr anklickbar.
+//  • Zahlungs-/Bankdienste: prüfen aktiv auf blockierte Skripte (Betrugs-/Bot-Erkennung) und sperren
+//    sonst den Zugriff („Der Zugriff ist vorübergehend eingeschränkt" bei PayPal).
 const PAYMENT_ALLOW = [
+  'youtube.com', 'youtu.be', 'ytimg.com', 'googlevideo.com',
   'paypal.com', 'paypal.me', 'stripe.com', 'checkout.com', 'adyen.com', 'klarna.com', 'sofort.com',
   'sparkasse.de', 'commerzbank.de', 'deutsche-bank.de', 'postbank.de', 'ing.de', 'dkb.de',
   'volksbank.de', 'vr.de', 'n26.com', 'revolut.com', 'wise.com', 'kreditkartenbanking.de',
