@@ -328,6 +328,9 @@ async function addWhitelistFilters(host) {
 }
 
 function removeWhitelistFilters(host) {
+  // Fest eingebaute Ausnahmen (YouTube, Zahlungsdienste) dürfen nicht über das Shield-Symbol
+  // zurückgenommen werden — sonst wäre die Seite sofort wieder kaputt.
+  if (PAYMENT_ALLOW.some((h) => host === h || host.endsWith('.' + h))) return;
   const filters = whitelistFilters.get(host);
   if (!blocker || !filters) return;
   try {

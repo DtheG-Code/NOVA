@@ -29,11 +29,19 @@ if (location.protocol === 'nova:') {
   // Auf normalen Webseiten den Ghostery-Cosmetic-Filter aktivieren:
   // versteckt Werbeflächen/Banner direkt im DOM (Element-Hiding, Scriptlets,
   // erweiterte Selektoren). Das ergänzt das Netzwerk-Blocking deutlich.
-  try {
-    require('@ghostery/adblocker-electron-preload');
-  } catch (err) {
-    // Adblock-Cosmetic-Preload optional — Browser läuft auch ohne weiter
-    console.debug('[nova] cosmetic preload unavailable:', err && err.message);
+  //
+  // AUSNAHMEN: Auf diesen Seiten NICHT laden. Die Cosmetic-Engine spielt auch Scriptlets ein, die
+  // seiteneigenes JavaScript umschreiben. Auf YouTube kollidiert das mit NOVAs eigenem Werbe-Entferner
+  // (der die Werbung schon aus der Player-Antwort löscht) → Seite lädt, reagiert aber auf keinen Klick.
+  // Zahlungsdienste werten manipulierte Skripte zudem als Betrugsversuch.
+  const NO_COSMETIC = /(^|\.)(youtube\.com|youtu\.be|paypal\.com|stripe\.com|klarna\.com|adyen\.com|checkout\.com)$/i;
+  if (!NO_COSMETIC.test(location.hostname)) {
+    try {
+      require('@ghostery/adblocker-electron-preload');
+    } catch (err) {
+      // Adblock-Cosmetic-Preload optional — Browser läuft auch ohne weiter
+      console.debug('[nova] cosmetic preload unavailable:', err && err.message);
+    }
   }
 
   // ------------------------------------------------------------------
