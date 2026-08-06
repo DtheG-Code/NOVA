@@ -20,7 +20,12 @@ const { importEdgeBookmarks } = require('./edge-import');
 // Googles browser-natives Login (FedCM) ist im eingebetteten Webview instabil und ließ NOVA beim „Anmelden"
 // (z. B. YouTube Music) abstürzen. Deaktivieren → Google fällt auf den klassischen Redirect/Popup-Login zurück,
 // den wir sauber über den Echtbrowser umleiten. Muss VOR app.whenReady gesetzt werden.
-try { app.commandLine.appendSwitch('disable-features', 'FedCm,FedCmWithoutWellKnownEnforcement,FedCmButtonMode,FedCmIdpSigninStatus,FedCmMultipleIdentityProviders'); } catch {}
+// WICHTIG: bereits gesetzte Werte erhalten — appendSwitch ÜBERSCHREIBT denselben Schalter sonst,
+// was andere Chromium-Defaults aushebeln kann. Nur FedCm selbst deaktivieren.
+try {
+  const cur = app.commandLine.getSwitchValue('disable-features');
+  app.commandLine.appendSwitch('disable-features', (cur ? cur + ',' : '') + 'FedCm');
+} catch {}
 
 app.setName('Nova Browser');
 // Portable-Release (Marker neben der EXE) → eigene Profildaten dort = Werkseinstellungen,

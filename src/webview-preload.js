@@ -104,7 +104,7 @@ if (location.protocol === 'nova:') {
   // NOVA Discord: Call-Status auslesen (in Sprachkanal? welcher? mit wem?) und an den Host melden,
   // damit die eingeklappte Rand-Leiste das anzeigt. Best-Effort über stabile Klassen-Präfixe.
   // ------------------------------------------------------------------
-  if (/(^|\.)discord\.com$/.test(location.hostname)) {
+  if (/(^|\.)discord\.com$/.test(location.hostname)) try {
     let last = '';
     const readCall = () => {
       let inCall = false, channel = '', people = [];
@@ -127,13 +127,13 @@ if (location.protocol === 'nova:') {
     };
     setInterval(readCall, 2500);
     setTimeout(readCall, 1500);
-  }
+  } catch (e) {}
 
   // ------------------------------------------------------------------
   // NOVA WhatsApp: Status auslesen (Ungelesen-Anzahl + im Anruf?) und an den Host melden,
   // damit die eingeklappte Rand-Leiste das anzeigt. Ungelesen kommt zuverlässig aus dem Titel „(N) WhatsApp".
   // ------------------------------------------------------------------
-  if (/(^|\.)whatsapp\.com$/.test(location.hostname)) {
+  if (/(^|\.)whatsapp\.com$/.test(location.hostname)) try {
     let last = '';
     const readWa = () => {
       let unread = 0, inCall = false;
@@ -147,14 +147,14 @@ if (location.protocol === 'nova:') {
     };
     setInterval(readWa, 2500);
     setTimeout(readWa, 1500);
-  }
+  } catch (e) {}
 
   // ------------------------------------------------------------------
   // NOVA Vault — Login-Felder erkennen + animiert ausfüllen.
   // Inline-Chip in einem GESCHLOSSENEN Shadow-DOM (von der Seite weder lesbar noch stylebar).
   // Passwörter kommen erst auf Klick vom Hauptprozess und werden hier nur ins Feld getippt.
   // ------------------------------------------------------------------
-  (function novaVaultAutofill() {
+  try { (function novaVaultAutofill() {
     const origin = location.origin || (location.protocol + '//' + location.host);
     let matches = [];            // vom Host: [{id,title,username}] — NIE Passwörter
     let vaultLocked = false;     // Tresor gesperrt? → Vorschlag wird trotzdem angezeigt, Entsperren erst beim Klick
@@ -301,7 +301,8 @@ if (location.protocol === 'nova:') {
     document.addEventListener('focusin', (e) => {
       const t = e.target;
       if (!t || !t.matches || !t.matches('input')) return;
-      const g = groups.find((x) => x.user === t || x.pass === t);
+      let g = groups.find((x) => x.user === t || x.pass === t);
+      if (!g) { refresh(); g = groups.find((x) => x.user === t || x.pass === t); }   // Formular kam später ins DOM
       if (g && matches.length) { activeGroup = g; chipAnchor = t; showChip(); }
     }, true);
     document.addEventListener('focusout', () => { setTimeout(() => { if (!chipHovered) hideChip(); }, 200); }, true);
@@ -324,14 +325,22 @@ if (location.protocol === 'nova:') {
     }, true);
 
     // ---- Start + SPA-Beobachtung ----
-    let moTimer = null;
+    // Auf großen Single-Page-Seiten (YouTube & Co.) feuert der Observer sehr oft. Deshalb: träger
+    // Debounce und Abschalten, wenn die Seite offensichtlich gar keine Login-Felder hat. Beim Fokus
+    // auf ein Eingabefeld wird ohnehin neu geprüft (siehe focusin unten).
+    let moTimer = null, idleRuns = 0, mo = null;
+    const rescan = () => {
+      refresh();
+      if (!groups.length) { if (++idleRuns >= 4 && mo) { try { mo.disconnect(); } catch (e) {} mo = null; } }
+      else idleRuns = 0;
+    };
     try {
-      const mo = new MutationObserver(() => { clearTimeout(moTimer); moTimer = setTimeout(refresh, 600); });
+      mo = new MutationObserver(() => { clearTimeout(moTimer); moTimer = setTimeout(rescan, 1200); });
       mo.observe(document.documentElement, { childList: true, subtree: true });
     } catch (e) {}
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(refresh, 400));
-    else setTimeout(refresh, 400);
-  })();
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(rescan, 400));
+    else setTimeout(rescan, 400);
+  })(); } catch (e) { try { console.warn('[NOVA] Tresor-Autofill deaktiviert:', e && e.message); } catch (_) {} }
 
   // ------------------------------------------------------------------
   // Google/YouTube-Consent-Seite automatisch wegklicken (sonst hängt YouTube Music
