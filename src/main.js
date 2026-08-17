@@ -844,7 +844,15 @@ function findRealBrowser() {
   ]) { try { if (p && fs.existsSync(p)) return p; } catch {} }
   return null;
 }
-function stopGl() { try { if (glChild) glChild.kill(); } catch {} glChild = null; }
+let glActive = false, glWs = null;   // Lebenszeichen NICHT am Prozess festmachen (siehe googleLoginViaBrowser)
+function stopGl() {
+  // Sauber über das Debug-Protokoll schließen — der gestartete Prozess ist bei Chrome/Edge oft nur
+  // ein Starter, der sich sofort beendet; kill() würde dann das echte Fenster nicht treffen.
+  try { if (glWs) glWs.send(JSON.stringify({ id: 999999, method: 'Browser.close', params: {} })); } catch {}
+  try { if (glWs) glWs.close(); } catch {}
+  try { if (glChild) glChild.kill(); } catch {}
+  glWs = null; glChild = null; glActive = false;
+}
 async function injectGoogleCookies(cookies) {
   // In BEIDE relevanten Sessions setzen: Browsing (persist:nova) UND NOVA-Sound/YouTube Music (persist:nova-music)
   const targets = [ses, session.fromPartition('persist:nova-music')].filter(Boolean);
@@ -865,34 +873,39 @@ async function injectGoogleCookies(cookies) {
   }
 }
 async function googleLoginViaBrowser() {
-  if (glChild) { broadcast('google:login-status', { state: 'busy' }); return; }
+  if (glActive) { broadcast('google:login-status', { state: 'busy' }); return; }
   const exe = findRealBrowser();
   if (!exe) { broadcast('google:login-status', { state: 'error', msg: 'Kein Chrome/Edge gefunden' }); return; }
   const port = 9333;
   const profile = path.join(app.getPath('userData'), 'glogin');
   try { fs.mkdirSync(profile, { recursive: true }); } catch {}
+  glActive = true;
   broadcast('google:login-status', { state: 'opening' });
   try {
+    // detached: Der eigentliche Browser lebt unabhängig weiter. Chrome/Edge starten häufig nur einen
+    // kurzlebigen Starter-Prozess — früher galt dessen Ende als „Browser zu", NOVA brach dann ab und
+    // schloss das Anmeldefenster sofort wieder. Deshalb ist der Prozess KEIN Lebenszeichen mehr.
     glChild = spawn(exe, ['--user-data-dir=' + profile, '--remote-debugging-port=' + port,
       '--no-first-run', '--no-default-browser-check', '--new-window', 'https://accounts.google.com/'],
-      { detached: false, stdio: 'ignore' });
-  } catch (e) { glChild = null; broadcast('google:login-status', { state: 'error', msg: String(e && e.message || e) }); return; }
-  glChild.on('exit', () => { glChild = null; });
+      { detached: true, stdio: 'ignore' });
+    try { glChild.unref(); } catch {}
+  } catch (e) { glActive = false; glChild = null; broadcast('google:login-status', { state: 'error', msg: String(e && e.message || e) }); return; }
   const start = Date.now();
   let wsUrl = null;
-  for (let i = 0; i < 50 && !wsUrl && glChild; i++) {
+  // Auf die Debug-Schnittstelle warten (bis ~20 s) — unabhängig davon, ob der Starter-Prozess noch lebt
+  for (let i = 0; i < 65 && !wsUrl && glActive; i++) {
     await new Promise((r) => setTimeout(r, 300));
     try { const j = await (await net.fetch('http://127.0.0.1:' + port + '/json/version')).json(); wsUrl = j.webSocketDebuggerUrl; } catch {}
   }
   if (!wsUrl) { stopGl(); broadcast('google:login-status', { state: 'error', msg: 'Debug-Verbindung fehlgeschlagen' }); return; }
   let ws;
-  try { ws = new WebSocket(wsUrl); } catch (e) { stopGl(); broadcast('google:login-status', { state: 'error', msg: String(e && e.message || e) }); return; }
+  try { ws = new WebSocket(wsUrl); glWs = ws; } catch (e) { stopGl(); broadcast('google:login-status', { state: 'error', msg: String(e && e.message || e) }); return; }
   let id = 1; const pend = {};
   const cdp = (method) => new Promise((res) => { const i = id++; pend[i] = res; try { ws.send(JSON.stringify({ id: i, method, params: {} })); } catch { res(null); } });
   ws.addEventListener('message', (ev) => { try { const m = JSON.parse(ev.data); if (m.id && pend[m.id]) { pend[m.id](m.result); delete pend[m.id]; } } catch {} });
   ws.addEventListener('open', () => { broadcast('google:login-status', { state: 'waiting' }); poll(); });
   async function poll() {
-    if (!glChild) { try { ws.close(); } catch {} return; }
+    if (!glActive) { try { ws.close(); } catch {} return; }
     let cookies = [];
     try { const r = await cdp('Storage.getCookies'); cookies = (r && r.cookies) || []; } catch {}
     const loggedIn = cookies.some((c) => /^(SAPISID|__Secure-3PSID|__Secure-1PSID)$/.test(c.name) && /(^|\.)google\.com$/.test(c.domain || ''));
@@ -946,6 +959,10 @@ function isPopupAd(url, contents) {
   if (!/^https?:$/.test(target.protocol)) return false;
   const sameSite = opener && baseDomain(target.hostname) === baseDomain(opener.hostname);
   if (sameSite) return false;                       // Popups zur eigenen Seite immer erlauben
+  // Anmelde-/OAuth-Fenster NIE blockieren (Google, Microsoft, Apple, Discord, Zahlungsdienste …)
+  if (/^(accounts|account|login|signin|auth|oauth|sso|id|identity|secure|connect)\./i.test(target.hostname)
+    || /\/(oauth2?|openid|signin|sign-in|sign_in|login|logon|auth(orize)?|sso|connect|checkout|3ds|verify)(\/|$|\?|#)/i.test(target.pathname)
+    || PAYMENT_ALLOW.some((d) => target.hostname === d || target.hostname.endsWith('.' + d))) return false;
 
   // 1) Die Filterlisten kennen das Ziel als Werbung/Tracking → verwerfen
   if (blocker && AdblockRequest) {
