@@ -110,6 +110,13 @@ contextBridge.exposeInMainWorld('nova', {
     save: send('session:save'),
   },
 
+  tabdrag: {   // Tab in ein anderes Fenster / auf den Desktop ziehen
+    start: send('tabdrag:start'),
+    consumed: send('tabdrag:consumed'),
+    end: invoke('tabdrag:end'),
+    onRemove: on('tabdrag:remove'),
+  },
+
   shifter: {
     toggle: invoke('shifter:toggle'),
     status: invoke('shifter:status'),

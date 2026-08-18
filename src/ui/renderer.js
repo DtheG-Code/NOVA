@@ -303,6 +303,7 @@ function mountWebview(tab, src) {
   const wv = document.createElement('webview');
   wv.setAttribute('partition', PARTITION);
   wv.setAttribute('allowpopups', '');
+  wv.setAttribute('plugins', '');   // aktiviert Chromiums eingebauten PDF-Viewer (sonst laden PDFs endlos)
   if (state.webviewPreload) wv.setAttribute('preload', state.webviewPreload);
   wv.setAttribute('webpreferences', 'contextIsolation=yes,sandbox=no,backgroundThrottling=no');
   wv.setAttribute('src', src);
@@ -452,7 +453,17 @@ function buildTabElement(tab) {
   close.addEventListener('click', () => closeTab(tab.id));
   audio.addEventListener('click', () => toggleMute(tab.id));
 
-  e.addEventListener('dragstart', () => { state.dragTabId = tab.id; hideTabPreview(); });
+  e.addEventListener('dragstart', (ev) => {
+    state.dragTabId = tab.id; hideTabPreview();
+    // Tab kann auch in ein ANDERES NOVA-Fenster oder auf den Desktop (→ neues Fenster) gezogen werden
+    const payload = { winId: state.winId, tabId: tab.id, url: tab.pendingUrl || tab.url || 'nova://newtab', title: tab.title || '' };
+    try { ev.dataTransfer.setData('application/x-nova-tab', JSON.stringify(payload)); ev.dataTransfer.effectAllowed = 'copyMove'; } catch {}
+    try { window.nova.tabdrag.start({ tabId: tab.id, url: payload.url, title: payload.title, soleTab: state.tabs.length === 1 }); } catch {}
+  });
+  e.addEventListener('dragend', (ev) => {
+    state.dragTabId = null;
+    try { window.nova.tabdrag.end({ x: ev.screenX, y: ev.screenY }); } catch {}
+  });
   e.addEventListener('dragover', (ev) => { ev.preventDefault(); e.classList.add('dragover'); });
   e.addEventListener('dragleave', () => e.classList.remove('dragover'));
   e.addEventListener('drop', (ev) => {
@@ -559,6 +570,31 @@ $('#tabstrip-new').addEventListener('click', () => createTab());
 })();
 // Der Leerraum der oberen Tab-Leiste ist bewusst KEINE app-region:drag mehr (die würde den Mittelklick
 // schlucken). Fenster-Ziehen + Doppelklick-Maximieren daher hier selbst umsetzen.
+// ---- Tabs zwischen NOVA-Fenstern ziehen (Edge-Stil) ----
+// Drop eines Tabs aus einem ANDEREN Fenster in diese Tab-Leiste → Tab hierher übernehmen;
+// die Quelle entfernt ihn (und schließt sich, wenn es ihr letzter Tab war).
+['#tabstrip', '#tab-list', '#pinned-grid'].forEach((sel) => {
+  const host = $(sel); if (!host) return;
+  host.addEventListener('dragover', (ev) => {
+    const types = ev.dataTransfer && ev.dataTransfer.types;
+    if (types && Array.prototype.includes.call(types, 'application/x-nova-tab')) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; }
+  });
+  host.addEventListener('drop', (ev) => {
+    let d = null;
+    try { d = JSON.parse(ev.dataTransfer.getData('application/x-nova-tab') || 'null'); } catch {}
+    if (!d || d.winId === state.winId) return;   // eigenes Fenster → Chip-Reorder übernimmt
+    ev.preventDefault();
+    createTab(d.url || 'nova://newtab');
+    try { window.nova.tabdrag.consumed(); } catch {}
+  });
+});
+if (window.nova.tabdrag && window.nova.tabdrag.onRemove) {
+  window.nova.tabdrag.onRemove(({ tabId, closeIfEmpty }) => {
+    const t = state.tabs.find((x) => x.id === tabId); if (!t) return;
+    if (closeIfEmpty && state.tabs.length === 1) { window.nova.win.close(); return; }   // letzter Tab zog weg → Fenster schließen
+    closeTab(tabId);
+  });
+}
 (function setupTabstripFreeArea() {
   const strip = $('#tabstrip-tabs'); if (!strip) return;
   const isFree = (t) => !(t.closest && (t.closest('.tab') || t.closest('button')));
@@ -1214,6 +1250,7 @@ function resolveInput(text) {
   if (!t) return null;
   if (/^(nova|view-source|about):/i.test(t)) return t;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return t;
+  if (/^[a-zA-Z]:[\\/]/.test(t)) return 'file:///' + t.replace(/\\/g, '/');   // lokaler Pfad (PDF & Co.)
   if (/^localhost(:\d+)?([/?#]|$)/i.test(t)) return 'http://' + t;
   if (/^\d{1,3}(\.\d{1,3}){3}(:\d+)?([/?#]|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /\.[a-z]{2,}([/?#:]|$)/i.test(t)) return 'https://' + t;
@@ -7316,6 +7353,8 @@ if (window.nova.google && window.nova.google.onStatus) {
   state.webviewPreload = data.webviewPreload;
   state.versions = data.versions;
   state.totalBlocked = data.totalBlocked;
+  state.winId = data.winId;
+  state.isSecondary = !!data.isSecondary;   // herausgezogenes Tab-Fenster (keine Session, kein Session-Speichern)
 
   if (state.settings.sidebarCollapsed) $('#app').classList.add('sb-collapsed');
   if (typeof state.settings.sidebarWidth === 'number') $('#app').style.setProperty('--sb-w', Math.min(SB_MAX, Math.max(SB_MIN, state.settings.sidebarWidth)) + 'px');
@@ -7341,7 +7380,7 @@ if (window.nova.google && window.nova.google.onStatus) {
   try { chromeNebula.apply(state.settings.nebulaQuality || 'mid'); } catch {}   // GPU-Nebel hinter der Oberfläche
   music.applySettings();
   claude.applySettings();
-  restoreSession(data.sessionTabs, data.startUrl);
+  restoreSession(state.isSecondary ? null : data.sessionTabs, data.startUrl);
   ensureIcon();
   // Warp-Animationen erst nach dem Startup zulassen (nicht beim Session-Restore)
   setTimeout(() => { warpReady = true; }, 1400);

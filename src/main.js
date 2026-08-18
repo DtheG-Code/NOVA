@@ -159,18 +159,27 @@ if (!gotLock) {
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.focus();
-    const url = argv.find((a) => /^https?:\/\//i.test(a));
+    const url = urlFromArgv(argv);   // auch lokale Dateien (PDF & Co.) und nova:-URLs
     if (url) win.webContents.send('tabs:open', { url, background: false });
   });
 }
 
 // ---------------------------------------------------------------- helpers
 function broadcast(channel, payload) {
-  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  // An ALLE NOVA-Fenster (Haupt- + herausgezogene Tab-Fenster)
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send(channel, payload); } catch {}
+  }
 }
 
 function urlFromArgv(argv) {
-  return argv.find((a) => /^https?:\/\//i.test(a)) || null;
+  for (const a of argv.slice(1)) {
+    if (!a || a.startsWith('--')) continue;
+    if (/^(https?|file|nova):/i.test(a)) return a;
+    // Lokale Datei („Öffnen mit NOVA": PDF, HTML, Bilder …) → file://-URL
+    try { if (/^[a-zA-Z]:[\\/]/.test(a) && fs.existsSync(a) && fs.statSync(a).isFile()) return pathToFileURL(a).href; } catch {}
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- adblock
@@ -237,9 +246,14 @@ async function initAdblock() {
     const cachePath = path.join(app.getPath('userData'), ADBLOCK_CACHE);
 
     // Veralteten Cache verwerfen, damit die Listen frisch geladen werden
+    // Abgelaufenen Cache NICHT mehr loeschen: frueher wurden dann beim Start alle Listen neu
+    // heruntergeladen und kompiliert (mehrere MB, CPU-schwer) → „Browser braucht ewig zum Starten".
+    // Jetzt: den vorhandenen Cache sofort laden (Start in Sekundenbruchteilen) und die Listen
+    // unbemerkt im Hintergrund aktualisieren (refreshAdblockLists weiter unten).
+    let cacheStale = false;
     try {
       const st = fs.statSync(cachePath);
-      if (Date.now() - st.mtimeMs > ADBLOCK_MAX_AGE) fs.unlinkSync(cachePath);
+      cacheStale = Date.now() - st.mtimeMs > ADBLOCK_MAX_AGE;
     } catch {}
 
     whitelistFilters.clear();
@@ -322,6 +336,9 @@ async function initAdblock() {
 
     if (settings.get('adblockEnabled', true)) enableBlocking();
     console.log(`[adblock] engine ready — ${urls.length} Listen aktiv`);
+
+    // Veraltete Listen unsichtbar im Hintergrund erneuern (alte Engine blockt solange weiter)
+    if (cacheStale) setTimeout(() => { refreshAdblockLists().catch(() => {}); }, 25000);
   } catch (err) {
     console.error('[adblock] init failed:', err.message);
   }
@@ -1009,7 +1026,10 @@ app.on('web-contents-created', (_e, contents) => {
     if (isGoogleAuth(url)) { googleLoginViaBrowser(); return { action: 'deny' }; }
     if (/^https?:|^about:blank/i.test(url)) {
       if (isPopupAd(url, contents)) return { action: 'deny' };   // Werbe-Popup abfangen
-      broadcast('tabs:open', { url, background: disposition === 'background-tab', openerId: contents.id });
+      // Zielgerichtet an das Fenster, dem dieses Webview gehört (bei mehreren Fenstern sonst doppelt)
+      const hostWc = contents.hostWebContents;
+      const dst = hostWc && !hostWc.isDestroyed() ? hostWc : (win && !win.isDestroyed() ? win.webContents : null);
+      if (dst) dst.send('tabs:open', { url, background: disposition === 'background-tab', openerId: contents.id });
     }
     return { action: 'deny' };
   });
@@ -1038,7 +1058,9 @@ app.on('web-contents-created', (_e, contents) => {
     const action = matchShortcut(input);
     if (action) {
       ev.preventDefault();
-      broadcast('shortcut', action);
+      const hostWc = contents.hostWebContents;   // nur an das Fenster dieses Webviews (nicht an alle)
+      if (hostWc && !hostWc.isDestroyed()) hostWc.send('shortcut', action);
+      else broadcast('shortcut', action);
     }
   });
 
@@ -1127,25 +1149,78 @@ function createWindow() {
       }, 6000);
     });
   }
-  win.on('maximize', () => broadcast('win:maximized', true));
-  win.on('unmaximize', () => broadcast('win:maximized', false));
-  win.on('enter-full-screen', () => broadcast('win:fullscreen', true));
-  win.on('leave-full-screen', () => broadcast('win:fullscreen', false));
   win.on('closed', () => { win = null; });
+  wireWindowEvents(win);
+}
 
-  win.webContents.on('before-input-event', (ev, input) => {
-    // Shortcuts auch abfangen, wenn der Fokus in der Chrome-UI liegt
+// Fenster-Ereignisse pro Fenster verdrahten (gilt für Haupt- UND herausgezogene Tab-Fenster)
+function wireWindowEvents(w) {
+  const sendTo = (ch, v) => { try { if (!w.isDestroyed()) w.webContents.send(ch, v); } catch {} };
+  w.on('maximize', () => sendTo('win:maximized', true));
+  w.on('unmaximize', () => sendTo('win:maximized', false));
+  w.on('enter-full-screen', () => sendTo('win:fullscreen', true));
+  w.on('leave-full-screen', () => sendTo('win:fullscreen', false));
+  w.webContents.on('before-input-event', (ev, input) => {
+    // Shortcuts auch abfangen, wenn der Fokus in der Chrome-UI liegt (reload lädt sonst die UI neu)
     const action = matchShortcut(input);
-    if (action && !['reload', 'hard-reload'].includes(action)) {
-      // reload würde sonst die Chrome-UI neu laden
-      ev.preventDefault();
-      broadcast('shortcut', action);
-    } else if (action) {
-      ev.preventDefault();
-      broadcast('shortcut', action);
-    }
+    if (action) { ev.preventDefault(); sendTo('shortcut', action); }
   });
 }
+
+// ---- Zweitfenster (Tab herausgezogen): gleiche UI, startet mit genau diesem Tab ----
+const winStartUrls = new Map();   // webContents.id → Start-URL (markiert das Fenster als Zweitfenster)
+function createSecondaryWindow(startUrl, atX, atY) {
+  const iconPng = path.join(app.getPath('userData'), 'icon.png');
+  const w = new BrowserWindow({
+    width: 1180, height: 800, minWidth: 980, minHeight: 620,
+    x: typeof atX === 'number' ? Math.max(0, Math.round(atX - 220)) : undefined,
+    y: typeof atY === 'number' ? Math.max(0, Math.round(atY - 24)) : undefined,
+    frame: false, show: false, backgroundColor: '#07070e',
+    icon: fs.existsSync(iconPng) ? iconPng : undefined,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, nodeIntegration: false, sandbox: false,
+      webviewTag: true, spellcheck: false,
+    },
+  });
+  w.webContents.setMaxListeners(0);
+  const wcId = w.webContents.id;
+  winStartUrls.set(wcId, startUrl || 'nova://newtab');
+  w.loadFile(path.join(UI_DIR, 'index.html'));
+  w.once('ready-to-show', () => w.show());
+  w.on('closed', () => { winStartUrls.delete(wcId); });
+  wireWindowEvents(w);
+  return w;
+}
+
+// ---- Tab zwischen Fenstern ziehen (Edge-Stil): Quelle meldet Start/Ende, Ziel meldet Übernahme ----
+let tabDrag = null;   // { url, title, tabId, soleTab, sourceWc, consumed }
+ipcMain.on('tabdrag:start', (e, d) => {
+  tabDrag = { url: (d && d.url) || 'nova://newtab', title: (d && d.title) || '', tabId: d && d.tabId, soleTab: !!(d && d.soleTab), sourceWc: e.sender.id, consumed: false };
+});
+ipcMain.on('tabdrag:consumed', () => {
+  if (!tabDrag || tabDrag.consumed) return;
+  tabDrag.consumed = true;
+  const src = webContents.fromId(tabDrag.sourceWc);
+  if (src && !src.isDestroyed()) src.send('tabdrag:remove', { tabId: tabDrag.tabId, closeIfEmpty: true });
+});
+ipcMain.handle('tabdrag:end', async (_e, pt) => {
+  const d = tabDrag;
+  if (!d) return { done: false };
+  // Der Drop im Zielfenster kann noch unterwegs sein → kurz warten, bevor entschieden wird
+  if (!d.consumed) await new Promise((r) => setTimeout(r, 180));
+  tabDrag = null;
+  if (d.consumed) return { done: true };
+  const x = Math.round((pt && pt.x) || 0), y = Math.round((pt && pt.y) || 0);
+  const insideAny = BrowserWindow.getAllWindows().some((w) => {
+    try { const b = w.getBounds(); return x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height; } catch { return false; }
+  });
+  if (insideAny || d.soleTab) return { done: false };   // im Fenster losgelassen / einziger Tab → nichts tun
+  createSecondaryWindow(d.url, x, y);                    // auf dem Desktop losgelassen → eigenes Fenster
+  const src = webContents.fromId(d.sourceWc);
+  if (src && !src.isDestroyed()) src.send('tabdrag:remove', { tabId: d.tabId, closeIfEmpty: true });
+  return { done: true };
+});
 
 // ---------------------------------------------------------------- app ready
 app.whenReady().then(async () => {
@@ -1155,16 +1230,19 @@ app.whenReady().then(async () => {
   // tatsächlich Töne abspielen. Auf einem Standard-Electron ohne `components`
   // läuft der Browser normal weiter (nur ohne DRM-Wiedergabe).
   if (components && typeof components.whenReady === 'function') {
-    try {
-      await components.whenReady();
+    // NICHT awaiten: Der Widevine-Komponenten-Check (inkl. gelegentlichem CDM-Download/Update) hat
+    // frueher den kompletten Start blockiert — teils viele Sekunden. Das Fenster erscheint jetzt
+    // sofort; DRM meldet sich im Hintergrund bereit (Musik braucht es erst, wenn man sie oeffnet).
+    widevineState = { available: true, ready: false, status: 'wird im Hintergrund geladen …' };
+    components.whenReady().then(() => {
       const status = components.status ? components.status() : {};
       const wv = status['Widevine Content Decryption Module'] || status.WidevineCdm;
       widevineState = { available: true, ready: true, status: wv || 'geladen' };
       console.log('[widevine] bereit:', status);
-    } catch (err) {
+    }).catch((err) => {
       widevineState = { available: true, ready: false, status: 'Fehler: ' + err.message };
       console.error('[widevine] konnte nicht geladen werden:', err.message);
-    }
+    });
   } else {
     widevineState = { available: false, ready: false, status: 'Standard-Electron ohne Widevine' };
     console.warn('[widevine] Standard-Electron erkannt — DRM-Wiedergabe (Spotify/Apple Music) deaktiviert. Für Musik: castLabs-Electron installieren.');
@@ -1357,39 +1435,46 @@ app.on('before-quit', flushAll);
 app.on('will-quit', flushAll);
 
 // ================================================================ IPC
-ipcMain.handle('ui:ready', () => {
-  const startUrl = urlFromArgv(process.argv);
+ipcMain.handle('ui:ready', (e) => {
+  const wid = e.sender.id;
+  const isSecondary = winStartUrls.has(wid);   // herausgezogenes Tab-Fenster: KEINE Session-Wiederherstellung
+  const startUrl = isSecondary ? winStartUrls.get(wid) : urlFromArgv(process.argv);
+  const w = BrowserWindow.fromWebContents(e.sender);
   return {
     settings: settings.data,
     bookmarks: bookmarks.get('tree', []),
-    sessionTabs: settings.get('lastSession', []),
+    sessionTabs: isSecondary ? [] : settings.get('lastSession', []),
     startUrl,
+    winId: wid,
+    isSecondary,
     webviewPreload: pathToFileURL(path.join(__dirname, 'webview-preload.js')).toString(),
     versions: { app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome },
     totalBlocked: settings.get('totalBlocked', 0),
-    isMaximized: win?.isMaximized() || false,
+    isMaximized: w?.isMaximized() || false,
   };
 });
 
-// Fenster
-ipcMain.on('win:min', () => win?.minimize());
-ipcMain.on('win:max', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()));
-ipcMain.on('win:close', () => win?.close());
-ipcMain.on('win:fullscreen', () => win?.setFullScreen(!win.isFullScreen()));
+// Fenster — immer das Fenster des AUFRUFERS bedienen (nicht pauschal das Hauptfenster)
+const winOf = (e) => { try { return BrowserWindow.fromWebContents(e.sender); } catch { return null; } };
+ipcMain.on('win:min', (e) => winOf(e)?.minimize());
+ipcMain.on('win:max', (e) => { const w = winOf(e); if (!w) return; w.isMaximized() ? w.unmaximize() : w.maximize(); });
+ipcMain.on('win:close', (e) => winOf(e)?.close());
+ipcMain.on('win:fullscreen', (e) => { const w = winOf(e); if (w) w.setFullScreen(!w.isFullScreen()); });
 // Manuelles Fenster-Ziehen: Der Leerraum der Tab-Leiste darf KEINE app-region:drag sein (die schluckt
 // alle Mausklicks, u. a. den Mittelklick für „neuer Tab"). Stattdessen ziehen wir das Fenster selbst.
-let dragOrigin = null;
-ipcMain.on('win:dragStart', () => {
-  if (!win) return;
-  if (win.isMaximized()) { dragOrigin = null; return; }   // maximiert nicht verschieben
-  const [x, y] = win.getPosition();
-  dragOrigin = { x, y };
+const dragOrigins = new Map();   // webContents.id → Startposition des jeweiligen Fensters
+ipcMain.on('win:dragStart', (e) => {
+  const w = winOf(e);
+  if (!w || w.isMaximized()) { dragOrigins.delete(e.sender.id); return; }   // maximiert nicht verschieben
+  const [x, y] = w.getPosition();
+  dragOrigins.set(e.sender.id, { x, y });
 });
-ipcMain.on('win:dragMove', (_e, d) => {
-  if (!win || !dragOrigin || !d) return;
-  try { win.setPosition(Math.round(dragOrigin.x + (d.dx || 0)), Math.round(dragOrigin.y + (d.dy || 0))); } catch {}
+ipcMain.on('win:dragMove', (e, d) => {
+  const w = winOf(e); const o = dragOrigins.get(e.sender.id);
+  if (!w || !o || !d) return;
+  try { w.setPosition(Math.round(o.x + (d.dx || 0)), Math.round(o.y + (d.dy || 0))); } catch {}
 });
-ipcMain.on('win:dragEnd', () => { dragOrigin = null; });
+ipcMain.on('win:dragEnd', (e) => { dragOrigins.delete(e.sender.id); });
 
 // Einstellungen
 ipcMain.handle('settings:set', (_e, patch) => {
@@ -1666,6 +1751,29 @@ async function loadStoredExtensions() {
 
 // Adblock
 let adblockBusy = false;
+// Listen im Hintergrund aktualisieren, OHNE Schutzluecke: die alte Engine bleibt aktiv, bis die
+// frische fertig gebaut ist — dann wird in einem Wimpernschlag getauscht. Der Nutzer merkt nichts.
+async function refreshAdblockLists() {
+  if (adblockBusy) return false;
+  adblockBusy = true;
+  try {
+    const old = blocker;
+    try { fs.unlinkSync(path.join(app.getPath('userData'), ADBLOCK_CACHE)); } catch {}
+    await initAdblock();   // baut eine frische Engine (inkl. Whitelists/Custom-Filter/Ausnahmen)
+    if (blocker && old && blocker !== old) {
+      try { old.disableBlockingInSession(ses); } catch {}
+      blockingActive = false;
+      if (settings.get('adblockEnabled', true)) enableBlocking();
+    }
+    console.log('[adblock] Listen im Hintergrund aktualisiert');
+    return true;
+  } catch (err) {
+    console.error('[adblock] Hintergrund-Aktualisierung fehlgeschlagen', err.message);
+    return false;
+  } finally {
+    adblockBusy = false;
+  }
+}
 async function rebuildAdblock() {
   if (adblockBusy) return false;
   adblockBusy = true;
@@ -2728,8 +2836,12 @@ ipcMain.handle('share:download', async (_e, id, name) => {
 });
 ipcMain.handle('share:openDownloads', () => { try { shell.openPath(app.getPath('downloads')); } catch {} return { ok: true }; });
 
-// Session
-ipcMain.on('session:save', (_e, tabs) => settings.set('lastSession', tabs));
+// Session — NUR das Hauptfenster darf sie speichern (sonst überschreibt ein herausgezogenes
+// Tab-Fenster mit seinem einen Tab die komplette gespeicherte Sitzung)
+ipcMain.on('session:save', (e, tabs) => {
+  if (winStartUrls.has(e.sender.id)) return;
+  settings.set('lastSession', tabs);
+});
 
 // Neuer-Tab-Seite
 const fromNova = (e) => !!e.senderFrame?.url?.startsWith('nova:');
