@@ -35,6 +35,7 @@ $copied = 0; $renamed = 0; $sameRuntime = 0; $failed = @()
 Get-ChildItem -Path $Source -Recurse -File | ForEach-Object {
   $srcFile = $_   # NICHT $_ weiterverwenden: in catch-Bloecken ist $_ der Fehler (PS-5.1-Falle)
   $rel = $srcFile.FullName.Substring($Source.Length).TrimStart('\')
+  if ($rel -like 'NovaData\*' -or $rel -like '*\NovaData\*') { return }   # NIE ein Profil ueberschreiben
   $dst = Join-Path $Target $rel
   $dir = Split-Path $dst -Parent
   if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }

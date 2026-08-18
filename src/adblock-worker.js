@@ -7,8 +7,15 @@ const { parentPort, workerData } = require('node:worker_threads');
 
 (async () => {
   try {
-    const { FiltersEngine } = require('@ghostery/adblocker');
+    const { FiltersEngine, parseFilters } = require('@ghostery/adblocker');
     const engine = await FiltersEngine.fromLists(fetch, workerData.urls || [], workerData.config || {});
+    // Whitelists (PayPal/YouTube-Ausnahmen …) + eigene Filterregeln DIREKT einbacken:
+    // dann muss der Hauptprozess nach dem Laden des Caches kein engine.update() mehr machen
+    // (das kostete auf der ~27-MB-Engine ~1 s Haupt-Thread — sichtbarer Ruckler nach dem Start).
+    if (workerData.extra) {
+      const { networkFilters, cosmeticFilters } = parseFilters(String(workerData.extra));
+      engine.update({ newNetworkFilters: networkFilters, newCosmeticFilters: cosmeticFilters });
+    }
     const data = engine.serialize();   // Uint8Array
     parentPort.postMessage({ ok: true, data }, [data.buffer]);
   } catch (err) {

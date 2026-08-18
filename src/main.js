@@ -53,6 +53,17 @@ try {
 // Eigene App-Identität → Windows-Taskleiste nutzt unser Icon/Gruppierung
 if (process.platform === 'win32') app.setAppUserModelId('com.spark.nova-browser');
 
+// ---- Start-Diagnose: macht Haupt-Thread-Blockaden ("Keine Rückmeldung") im Log sichtbar ----
+const BOOT_T0 = Date.now();
+const perf = (msg) => console.log(`[perf +${((Date.now() - BOOT_T0) / 1000).toFixed(2)}s] ${msg}`);
+let __lagPrev = Date.now();
+setInterval(() => {
+  const n = Date.now();
+  const lag = n - __lagPrev - 400;
+  if (lag > 200) perf(`⚠ Haupt-Thread war ${lag} ms blockiert`);
+  __lagPrev = n;
+}, 400);
+
 // Der Ghostery-Adblocker injiziert Cosmetic-Filter per executeJavaScript in
 // jeden Frame. Navigiert eine Seite (z. B. SPAs wie YouTube) währenddessen
 // weiter, verschwindet der Ziel-Frame und die Injektion wirft harmlos
@@ -243,12 +254,12 @@ async function applyCustomFilters() {
 // Engine-Aufbau in einem WORKER-Thread: Herunterladen + Parsen der Listen ist CPU-schwer und
 // blockierte den Haupt-Thread → Fenster zeigte nach dem Start sekundenlang „Keine Rückmeldung".
 // Der Worker liefert die fertig serialisierte Engine; der Hauptprozess lädt sie in Millisekunden.
-function buildEngineInWorker(urls, engineConfig) {
+function buildEngineInWorker(urls, engineConfig, extra) {
   return new Promise((resolve, reject) => {
     let done = false;
     try {
       const { Worker } = require('node:worker_threads');
-      const w = new Worker(path.join(__dirname, 'adblock-worker.js'), { workerData: { urls, config: engineConfig } });
+      const w = new Worker(path.join(__dirname, 'adblock-worker.js'), { workerData: { urls, config: engineConfig, extra: extra || '' } });
       w.once('message', (m) => {
         done = true;
         try { w.terminate(); } catch {}
@@ -316,21 +327,53 @@ function wireEngine(engine) {
   };
 }
 
-// Whitelists + eigene Filterregeln auf die aktuelle Engine anwenden
-async function applyEngineExtras() {
+// Whitelist-Regeln + eigene Filter als Roh-Text — wird im WORKER in die Engine eingebacken.
+// Der Fingerprint daneben (Meta-Datei) sagt beim Start, ob der Cache diese Extras schon enthält.
+function extrasRawText() {
+  const lines = [];
+  const raw = (settings.get('customFilters', '') || '').trim();
+  if (raw) lines.push(raw);
+  // Zahlungs-/Banking-/Anmeldedienste NIE filtern (Betrugs-/Bot-Erkennung sperrt sonst, z. B. PayPal)
+  for (const host of [...PAYMENT_ALLOW, ...settings.get('whitelist', [])]) {
+    lines.push(`@@*$domain=${host}`, `@@||${host}^$elemhide,generichide`);
+  }
+  return lines.join('\n');
+}
+const extrasFingerprint = (extra, urls) => crypto.createHash('sha1').update(extra + '|' + urls.join(',')).digest('hex');
+
+// Whitelists + eigene Filterregeln auf die aktuelle Engine anwenden.
+// alreadyBaked = Extras stecken schon im Cache (Worker hat sie eingebacken) → nur die
+// whitelistFilters-Map füllen (für spätere Einzel-Entfernung), KEIN teures engine.update().
+// WICHTIG: Wenn doch nötig, alles in EINEM update() — jeder Aufruf baut interne Strukturen der
+// (bei vielen Listen ~27 MB großen) Engine neu; früher lief einer PRO Host (~20 Stück) →
+// zusammen >10 s Haupt-Thread-Blockade = „Keine Rückmeldung" nach dem Start.
+async function applyEngineExtras(alreadyBaked) {
   whitelistFilters.clear();
-  await applyCustomFilters();
-  // Zahlungs-, Banking- und Anmeldedienste NIE filtern: sie prüfen aktiv, ob Skripte blockiert
-  // werden (Betrugs-/Bot-Erkennung) und sperren sonst den Zugriff — bei PayPal z. B. mit
-  // „Der Zugriff ist vorübergehend eingeschränkt". Dort gibt es ohnehin keine Werbung.
-  for (const host of PAYMENT_ALLOW) await addWhitelistFilters(host);
-  for (const host of settings.get('whitelist', [])) await addWhitelistFilters(host);
+  const { NetworkFilter, parseFilters } = await import('@ghostery/adblocker');
+  const allNet = [], allCos = [];
+  const rawCustom = (settings.get('customFilters', '') || '').trim();
+  if (rawCustom && !alreadyBaked) {
+    try {
+      const { networkFilters, cosmeticFilters } = parseFilters(rawCustom);
+      allNet.push(...networkFilters); allCos.push(...cosmeticFilters);
+    } catch (err) { console.error('[adblock] custom filters failed:', err.message); }
+  }
+  for (const host of [...PAYMENT_ALLOW, ...settings.get('whitelist', [])]) {
+    if (whitelistFilters.has(host)) continue;
+    const raws = [`@@*$domain=${host}`, `@@||${host}^$elemhide,generichide`];
+    const filters = raws.map((r) => NetworkFilter.parse(r)).filter(Boolean);
+    whitelistFilters.set(host, filters);
+    if (!alreadyBaked) allNet.push(...filters);
+  }
+  if (allNet.length || allCos.length) blocker.update({ newNetworkFilters: allNet, newCosmeticFilters: allCos });
 }
 
 async function initAdblock() {
   try {
+    let __t = Date.now();
     const { ElectronBlocker } = await import('@ghostery/adblocker-electron');
     try { const { Request } = await import('@ghostery/adblocker'); AdblockRequest = Request; } catch {}
+    perf(`adblock: Bibliothek importiert (${Date.now() - __t} ms)`);
     const cachePath = path.join(app.getPath('userData'), ADBLOCK_CACHE);
 
     // Abgelaufenen Cache NICHT loeschen: sofort laden (schneller Start), Listen später
@@ -343,24 +386,42 @@ async function initAdblock() {
 
     const urls = enabledFilterUrls();
     const engineConfig = currentEngineConfig();
+    const extra = extrasRawText();
+    const fp = extrasFingerprint(extra, urls);
+    const metaPath = cachePath + '.meta';
+    let baked = false;
+    try { baked = fs.readFileSync(metaPath, 'utf8').trim() === fp; } catch {}
 
     // 1) Cache laden (reines Deserialisieren — Millisekunden, blockiert nichts spürbar)
     let engine = null;
     if (fs.existsSync(cachePath)) {
-      try { engine = ElectronBlocker.deserialize(await fsp.readFile(cachePath)); }
+      try {
+        __t = Date.now();
+        const buf = await fsp.readFile(cachePath);
+        perf(`adblock: Cache gelesen (${Date.now() - __t} ms, ${(buf.length / 1048576).toFixed(1)} MB)`);
+        __t = Date.now();
+        engine = ElectronBlocker.deserialize(buf);
+        perf(`adblock: deserialisiert (${Date.now() - __t} ms, Extras eingebacken: ${baked ? 'ja' : 'nein'})`);
+      }
       catch (e) { console.warn('[adblock] Cache unlesbar — baue neu:', e.message); engine = null; }
     }
-    // 2) Kein (lesbarer) Cache → Engine im Worker bauen (Haupt-Thread bleibt frei)
+    // 2) Kein (lesbarer) Cache → Engine im Worker bauen (Haupt-Thread bleibt frei);
+    //    der Worker backt Whitelists/Custom-Filter gleich mit ein
     if (!engine) {
-      const data = await buildEngineInWorker(urls, engineConfig);
-      try { await fsp.writeFile(cachePath, data); } catch {}
+      const data = await buildEngineInWorker(urls, engineConfig, extra);
+      try { await fsp.writeFile(cachePath, data); await fsp.writeFile(metaPath, fp); } catch {}
       engine = ElectronBlocker.deserialize(data);
-      cacheStale = false;
+      cacheStale = false; baked = true;
+      perf('adblock: frisch im Worker gebaut (inkl. Extras)');
     }
 
     blocker = engine;
     wireEngine(blocker);
-    await applyEngineExtras();
+    __t = Date.now();
+    await applyEngineExtras(baked);
+    perf(`adblock: Whitelists/Custom angewendet (${Date.now() - __t} ms${baked ? ', ohne Engine-Update' : ''})`);
+    // Extras waren noch nicht im Cache → einmalig im Hintergrund neu backen (danach startet es ohne Ruckler)
+    if (!baked) cacheStale = true;
 
     if (settings.get('adblockEnabled', true)) enableBlocking();
     console.log(`[adblock] engine ready — ${urls.length} Listen aktiv`);
@@ -1145,7 +1206,7 @@ function createWindow() {
   applyWindowIcon();
 
   win.loadFile(path.join(UI_DIR, 'index.html'));
-  win.once('ready-to-show', () => { win.show(); applyWindowIcon(); });
+  win.once('ready-to-show', () => { win.show(); applyWindowIcon(); perf('Fenster sichtbar'); });
 
   if (process.env.NOVA_SHOT) {
     win.setPosition(0, 0);
@@ -1278,11 +1339,13 @@ app.whenReady().then(async () => {
     console.warn('[widevine] Standard-Electron erkannt — DRM-Wiedergabe (Spotify/Apple Music) deaktiviert. Für Musik: castLabs-Electron installieren.');
   }
 
+  let __t = Date.now();
   settings = new JsonStore(path.join(app.getPath('userData'), 'settings.json'), DEFAULT_SETTINGS);
   shareInit();   // gespeicherten Share-Token/Benutzer laden
   bookmarks = new JsonStore(path.join(app.getPath('userData'), 'bookmarks.json'), { tree: [] });
   history = new JsonStore(path.join(app.getPath('userData'), 'history.json'), { items: [] });
   securityDb = new JsonStore(path.join(app.getPath('userData'), 'security-db.json'), {});   // host → Security-Report
+  perf(`Stores geladen (${Date.now() - __t} ms; history=${(history.get('items', []) || []).length} Einträge)`);
   globalDlLimit = settings.get('dlGlobalLimit', 0) || 0;
   setTimeout(() => { secPull(); }, 4000);                 // geteilte Security-DB beim Start holen
   setTimeout(() => { registerFileTypes(); }, 5000);       // .pdf-Einträge (Befehl + Icon) still aktuell halten
@@ -1772,8 +1835,10 @@ async function loadStoredExtensions() {
     if (ext.enabled === false) continue;
     try {
       if (fs.existsSync(path.join(ext.path, 'manifest.json'))) {
+        const __t = Date.now();
         const loaded = await ses.loadExtension(ext.path, { allowFileAccess: true });
         ext.id = loaded.id; ext.name = loaded.name; delete ext.error;
+        perf(`Erweiterung geladen: ${loaded.name} (${Date.now() - __t} ms)`);
       } else { ext.error = 'Ordner fehlt'; }
     } catch (err) { ext.error = err.message; }
     changed = true;
@@ -1793,13 +1858,15 @@ async function refreshAdblockLists() {
   try {
     const { ElectronBlocker } = await import('@ghostery/adblocker-electron');
     const cachePath = path.join(app.getPath('userData'), ADBLOCK_CACHE);
-    const data = await buildEngineInWorker(enabledFilterUrls(), currentEngineConfig());
-    try { await fsp.writeFile(cachePath, data); } catch {}
+    const urls = enabledFilterUrls();
+    const extra = extrasRawText();
+    const data = await buildEngineInWorker(urls, currentEngineConfig(), extra);
+    try { await fsp.writeFile(cachePath, data); await fsp.writeFile(cachePath + '.meta', extrasFingerprint(extra, urls)); } catch {}
     const fresh = ElectronBlocker.deserialize(data);
     const old = blocker;
     blocker = fresh;
     wireEngine(fresh);
-    await applyEngineExtras();
+    await applyEngineExtras(true);   // Extras stecken schon in der Worker-Engine
     if (old) { try { old.disableBlockingInSession(ses); } catch {} }
     blockingActive = false;
     if (settings.get('adblockEnabled', true)) enableBlocking();
