@@ -3136,6 +3136,51 @@ async function ensureIcon() {
   }
 }
 
+// PDF-Datei-Icon erzeugen (Dokument mit Eselsohr + rotem PDF-Band) → pdf.ico.
+// Wird in der Registry als Icon für .pdf-Dateien eingetragen — statt des Electron-Atoms der EXE.
+async function ensurePdfIcon() {
+  try {
+    const V = '1';
+    if (localStorage.getItem('novaPdfIconV') === V) return;
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const x = c.getContext('2d');
+    const px = 46, py = 16, pw = 164, ph = 224, r = 16, fold = 44;
+    // Seite mit Schatten + Eselsohr oben rechts
+    x.save();
+    x.shadowColor = 'rgba(0,0,0,0.45)'; x.shadowBlur = 16; x.shadowOffsetY = 6;
+    const g = x.createLinearGradient(0, py, 0, py + ph);
+    g.addColorStop(0, '#f8f9fe'); g.addColorStop(1, '#dde1f0');
+    x.fillStyle = g;
+    x.beginPath();
+    x.moveTo(px + r, py);
+    x.lineTo(px + pw - fold, py);
+    x.lineTo(px + pw, py + fold);
+    x.lineTo(px + pw, py + ph - r); x.quadraticCurveTo(px + pw, py + ph, px + pw - r, py + ph);
+    x.lineTo(px + r, py + ph); x.quadraticCurveTo(px, py + ph, px, py + ph - r);
+    x.lineTo(px, py + r); x.quadraticCurveTo(px, py, px + r, py);
+    x.closePath(); x.fill();
+    x.restore();
+    x.fillStyle = '#c2c8dd';   // Eselsohr
+    x.beginPath(); x.moveTo(px + pw - fold, py); x.lineTo(px + pw - fold, py + fold); x.lineTo(px + pw, py + fold); x.closePath(); x.fill();
+    // angedeutete Textzeilen
+    x.fillStyle = 'rgba(96,104,138,0.45)';
+    [58, 78, 98].forEach((yy, i) => x.fillRect(px + 22, yy, pw - 44 - (i === 2 ? 46 : 0), 9));
+    // rotes PDF-Band
+    const by = 128, bh = 62;
+    x.fillStyle = '#e2413e';
+    x.beginPath(); x.roundRect(px - 14, by, pw + 28, bh, 12); x.fill();
+    x.fillStyle = '#fff';
+    x.font = '800 44px Inter, "Segoe UI", system-ui, sans-serif';
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.fillText('PDF', px + pw / 2, by + bh / 2 + 2);
+    const ok = await window.nova.sys.setPdfIcon(c.toDataURL('image/png'));
+    if (ok) localStorage.setItem('novaPdfIconV', V);
+  } catch (err) {
+    console.error('pdf icon gen failed', err);
+  }
+}
+
 /* ============================================================ hyperspace warp */
 // Universum-Sprung-Animation. Sie wird angezeigt, SOLANGE die neue Seite lädt,
 // und blendet erst aus, wenn die Seite dahinter bereit ist — egal ob die
@@ -7382,6 +7427,7 @@ if (window.nova.google && window.nova.google.onStatus) {
   claude.applySettings();
   restoreSession(state.isSecondary ? null : data.sessionTabs, data.startUrl);
   ensureIcon();
+  ensurePdfIcon();   // Datei-Icon für .pdf (Registry) — statt Electron-Atom
   // Warp-Animationen erst nach dem Startup zulassen (nicht beim Session-Restore)
   setTimeout(() => { warpReady = true; }, 1400);
 })();

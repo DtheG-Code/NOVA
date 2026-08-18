@@ -194,6 +194,7 @@ contextBridge.exposeInMainWorld('nova', {
 
   sys: {
     setIcon: invoke('sys:icon'),
+    setPdfIcon: invoke('sys:pdfIcon'),
     iconExists: invoke('sys:iconExists'),
     createShortcut: invoke('sys:shortcut'),
     registerDefault: invoke('sys:registerDefault'),

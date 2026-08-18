@@ -1255,6 +1255,7 @@ app.whenReady().then(async () => {
   securityDb = new JsonStore(path.join(app.getPath('userData'), 'security-db.json'), {});   // host → Security-Report
   globalDlLimit = settings.get('dlGlobalLimit', 0) || 0;
   setTimeout(() => { secPull(); }, 4000);                 // geteilte Security-DB beim Start holen
+  setTimeout(() => { registerFileTypes(); }, 5000);       // .pdf-Einträge (Befehl + Icon) still aktuell halten
   setInterval(() => { secPull(); }, 6 * 60 * 60 * 1000);  // danach alle 6 h aktualisieren
 
   nativeTheme.themeSource = settings.get('forceDarkWeb', true) ? 'dark' : 'system';
@@ -3127,6 +3128,65 @@ ipcMain.handle('sys:icon', async (_e, dataUrl) => {
 });
 ipcMain.handle('sys:iconExists', () => fs.existsSync(path.join(app.getPath('userData'), 'icon.png')));
 
+// ---- Dateityp-Registrierung (.pdf): richtiger Startbefehl + eigenes PDF-Icon -----------------------
+// Zwei Probleme werden hier gelöst:
+//  1) CRASH: Eine Verknüpfung, die nur `electron.exe "datei.pdf"` aufruft (ohne App-Pfad), lässt
+//     Electron die PDF selbst als App laden → „Unknown file extension .pdf". Der hier registrierte
+//     Befehl enthält im Dev-Modus IMMER den App-Pfad; die portable NOVA.exe braucht keinen.
+//  2) ICON: Die EXE trägt das Electron-Atom (rcedit würde die Widevine-Signatur brechen). Das Icon
+//     kommt deshalb aus der Registry: pdf.ico für .pdf-Dateien, icon.ico für den Öffnen-mit-Eintrag.
+const openFileCommand = () => app.isPackaged
+  ? `"${process.execPath}" "%1"`
+  : `"${process.execPath}" "${APP_DIR}" -- "%1"`;
+const regAddArgs = (args) => new Promise((resolve) => {
+  execFile('reg', ['add', args[0], ...args.slice(1), '/f'], () => resolve());
+});
+async function registerFileTypes() {
+  try {
+    const dir = app.getPath('userData');
+    const pdfIco = path.join(dir, 'pdf.ico');
+    const appIco = path.join(dir, 'icon.ico');
+    const pdfIconRef = fs.existsSync(pdfIco) ? pdfIco : (fs.existsSync(appIco) ? appIco : `${process.execPath},0`);
+    const appIconRef = fs.existsSync(appIco) ? appIco : `${process.execPath},0`;
+    const launch = openFileCommand();
+    const C = 'HKCU\\Software\\Classes';
+    const exeName = path.basename(process.execPath);
+    const cmds = [
+      // ProgId für PDFs: eigenes Icon + korrekter Startbefehl
+      [`${C}\\NovaPDF`, '/ve', '/d', 'PDF-Dokument (NOVA)'],
+      [`${C}\\NovaPDF\\DefaultIcon`, '/ve', '/d', pdfIconRef],
+      [`${C}\\NovaPDF\\shell\\open\\command`, '/ve', '/d', launch],
+      [`${C}\\.pdf\\OpenWithProgids`, '/v', 'NovaPDF', '/t', 'REG_SZ', '/d', ''],
+      // Öffnen-mit-Eintrag der EXE selbst reparieren: MIT App-Pfad (behebt den Crash) + NOVA-Icon
+      [`${C}\\Applications\\${exeName}`, '/v', 'FriendlyAppName', '/d', 'NOVA'],
+      [`${C}\\Applications\\${exeName}\\DefaultIcon`, '/ve', '/d', appIconRef],
+      [`${C}\\Applications\\${exeName}\\shell\\open\\command`, '/ve', '/d', launch],
+      [`${C}\\Applications\\${exeName}\\SupportedTypes`, '/v', '.pdf', '/t', 'REG_SZ', '/d', ''],
+      // In den Windows-Standard-Apps als PDF-Handler wählbar
+      ['HKCU\\Software\\Clients\\StartMenuInternet\\NovaBrowser\\Capabilities\\FileAssociations', '/v', '.pdf', '/d', 'NovaPDF'],
+    ];
+    for (const c of cmds) await regAddArgs(c);
+  } catch (err) { console.error('[filetypes]', err.message); }
+}
+
+// PDF-Datei-Icon (vom Renderer gezeichnet) als pdf.ico speichern + Registrierung auffrischen
+ipcMain.handle('sys:pdfIcon', async (_e, dataUrl) => {
+  try {
+    const png = Buffer.from(dataUrl.split(',')[1], 'base64');
+    const header = Buffer.alloc(6 + 16);
+    header.writeUInt16LE(0, 0); header.writeUInt16LE(1, 2); header.writeUInt16LE(1, 4);
+    header[6] = 0; header[7] = 0; header[8] = 0; header[9] = 0;
+    header.writeUInt16LE(1, 10); header.writeUInt16LE(32, 12);
+    header.writeUInt32LE(png.length, 14); header.writeUInt32LE(22, 18);
+    await fsp.writeFile(path.join(app.getPath('userData'), 'pdf.ico'), Buffer.concat([header, png]));
+    registerFileTypes();
+    return true;
+  } catch (err) {
+    console.error('[pdficon]', err.message);
+    return false;
+  }
+});
+
 function writeNovaShortcut(lnkPath) {
   const ico = path.join(app.getPath('userData'), 'icon.ico');
   return shell.writeShortcutLink(lnkPath, {
@@ -3188,6 +3248,7 @@ ipcMain.handle('sys:registerDefault', async () => {
     execFile('reg', ['add', args[0], ...args.slice(1).filter((a) => a !== null), '/f'], () => resolve());
   });
   for (const c of cmds) await regAdd(c);
+  await registerFileTypes();   // .pdf-Handler + Öffnen-mit-Einträge gleich mit registrieren
   shell.openExternal('ms-settings:defaultapps');
   return true;
 });

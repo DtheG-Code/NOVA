@@ -7,7 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'node_modules', 'electron', 'dist');
-const out = path.join(root, 'release', 'NOVA');
+// Ausgabeziel überschreibbar (NOVA_OUT): nötig, wenn NOVA gerade aus release/NOVA LÄUFT —
+// dann ist die EXE gesperrt und release/ lässt sich nicht aufräumen. Der Ordnername muss
+// „NOVA" bleiben (Zip-Layout, das der Auto-Updater erwartet).
+const out = process.env.NOVA_OUT ? path.resolve(process.env.NOVA_OUT) : path.join(root, 'release', 'NOVA');
 const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 const PRODUCT = 'NOVA';
 
@@ -17,7 +20,7 @@ if (!existsSync(path.join(dist, 'electron.exe'))) {
 }
 
 console.log('• Räume', out, 'auf …');
-rmSync(path.join(root, 'release'), { recursive: true, force: true });
+rmSync(out, { recursive: true, force: true });   // nur das Build-Ziel räumen (alte ZIPs in release/ bleiben)
 mkdirSync(out, { recursive: true });
 
 console.log('• Kopiere Electron-Runtime (~200 MB) …');
