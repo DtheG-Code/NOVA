@@ -282,9 +282,19 @@ function createTab(url = NEWTAB, opts = {}) {
   const wrap = el('div', 'wv-wrap');
   $('#webviews').appendChild(wrap);
   tab.wrap = wrap;
-  mountWebview(tab, opts.lazy ? 'about:blank' : url);
+  if (opts.lazy) {
+    // Wiederhergestellte Hintergrund-Tabs bekommen KEIN Webview: jedes <webview> ist ein eigener
+    // Chromium-Prozess — 20 Tabs = 20 Prozesse beim Start (teils >20 s Startzeit). Sie starten
+    // suspendiert (wie beim RAM-Sparen); beim ersten Aktivieren baut wakeTab das Webview.
+    tab.suspended = true;
+    tab.suspendedUrl = url;
+    tab.pendingUrl = null;   // sonst würde activateTab die URL nach dem Aufwecken doppelt laden
+  } else {
+    mountWebview(tab, url);
+  }
 
   tab.el = buildTabElement(tab);
+  if (tab.suspended) tab.el.classList.add('suspended');
 
   const idx = opts.afterId ? state.tabs.findIndex((t) => t.id === opts.afterId) + 1 : state.tabs.length;
   state.tabs.splice(idx > 0 ? idx : state.tabs.length, 0, tab);

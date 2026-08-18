@@ -1402,8 +1402,10 @@ app.whenReady().then(async () => {
 
   setupDownloads();
   createWindow();
-  initAdblock(); // läuft asynchron weiter
-  loadStoredExtensions(); // gespeicherte Chrome-Erweiterungen laden (asynchron)
+  // Erst das Fenster zeichnen lassen, DANN die CPU-lastigen Nebenaufgaben starten
+  // (Engine-Deserialisierung + Extension-Laden konkurrierten sonst mit dem ersten Paint).
+  setTimeout(() => { initAdblock(); }, 900);
+  setTimeout(() => { loadStoredExtensions(); }, 1800); // gespeicherte Chrome-Erweiterungen (asynchron)
 
   // Start-Menü-Verknüpfung sicherstellen → korrektes Taskleisten-Icon (auch angeheftet)
   if (process.platform === 'win32') {
