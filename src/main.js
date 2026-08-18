@@ -240,99 +240,127 @@ async function applyCustomFilters() {
   }
 }
 
+// Engine-Aufbau in einem WORKER-Thread: Herunterladen + Parsen der Listen ist CPU-schwer und
+// blockierte den Haupt-Thread → Fenster zeigte nach dem Start sekundenlang „Keine Rückmeldung".
+// Der Worker liefert die fertig serialisierte Engine; der Hauptprozess lädt sie in Millisekunden.
+function buildEngineInWorker(urls, engineConfig) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    try {
+      const { Worker } = require('node:worker_threads');
+      const w = new Worker(path.join(__dirname, 'adblock-worker.js'), { workerData: { urls, config: engineConfig } });
+      w.once('message', (m) => {
+        done = true;
+        try { w.terminate(); } catch {}
+        if (m && m.ok && m.data) resolve(m.data);
+        else reject(new Error((m && m.error) || 'Worker lieferte keine Engine'));
+      });
+      w.once('error', (e) => { if (!done) { done = true; reject(e); } });
+      w.once('exit', (code) => { if (!done) { done = true; reject(new Error('Worker-Exit ' + code)); } });
+    } catch (e) { reject(e); }
+  });
+}
+
+function currentEngineConfig() {
+  const cosmetic = settings.get('cosmeticEnabled', true);
+  return {
+    enableCompression: true,
+    loadCosmeticFilters: cosmetic,
+    loadGenericCosmeticsFilters: cosmetic,
+    loadNetworkFilters: true,
+    enableHtmlFiltering: true,
+    enableMutationObserver: true,
+  };
+}
+
+// Statistik-Events + Cosmetic-Ausnahmen an einer (frischen) Engine verdrahten.
+// Ausgelagert, damit der unsichtbare Hintergrund-Tausch (refreshAdblockLists) sie wiederverwendet.
+function wireEngine(engine) {
+  const onBlocked = (request) => {
+    settings.set('totalBlocked', settings.get('totalBlocked', 0) + 1);
+    const tabId = request.tabId;
+    if (typeof tabId === 'number' && tabId >= 0) {
+      tabBlockCounts.set(tabId, (tabBlockCounts.get(tabId) || 0) + 1);
+      try {
+        const host = new URL(request.url).hostname.replace(/^www\./, '');
+        let hosts = tabBlockHosts.get(tabId);
+        if (!hosts) { hosts = new Map(); tabBlockHosts.set(tabId, hosts); }
+        hosts.set(host, (hosts.get(host) || 0) + 1);
+      } catch {}
+    }
+    throttleStats();
+  };
+  engine.on('request-blocked', onBlocked);
+  engine.on('request-redirected', onBlocked);
+
+  // ---- Ausnahme-Seiten vollständig vom Cosmetic-Teil befreien ----------------------------------
+  // Der Adblocker registriert ein EIGENES Preload-Script in der Session. Das haengt einen
+  // MutationObserver ueber das gesamte DOM und schickt bei jeder Aenderung IPC-Anfragen an den
+  // Hauptprozess, um Element-Hiding und Scriptlets nachzuladen. Auf YouTube (permanente
+  // DOM-Aenderungen) erzeugt das eine IPC-Flut: die Seite bleibt im Ladezustand stehen und
+  // reagiert auf keinen Klick. Eine reine Netzwerk-Ausnahme (Whitelist) hilft dagegen NICHT —
+  // deshalb hier die Handler selbst abklemmen. Muss VOR enableBlockingInSession geschehen.
+  const cosmeticExempt = (url) => {
+    try { const h = new URL(url).hostname.toLowerCase(); return PAYMENT_ALLOW.some((d) => h === d || h.endsWith('.' + d)); }
+    catch { return false; }
+  };
+  const origInject = engine.onInjectCosmeticFilters;
+  engine.onInjectCosmeticFilters = async (event, url, msg) => {
+    if (cosmeticExempt(url)) return;                       // keine Filter/Scriptlets ausliefern
+    return origInject.call(engine, event, url, msg);
+  };
+  const origMutObs = engine.onIsMutationObserverEnabled;
+  engine.onIsMutationObserverEnabled = async (event) => {
+    try { if (cosmeticExempt(event.sender.getURL() || '')) return false; } catch {}   // DOM-Beobachter aus
+    return origMutObs.call(engine, event);
+  };
+}
+
+// Whitelists + eigene Filterregeln auf die aktuelle Engine anwenden
+async function applyEngineExtras() {
+  whitelistFilters.clear();
+  await applyCustomFilters();
+  // Zahlungs-, Banking- und Anmeldedienste NIE filtern: sie prüfen aktiv, ob Skripte blockiert
+  // werden (Betrugs-/Bot-Erkennung) und sperren sonst den Zugriff — bei PayPal z. B. mit
+  // „Der Zugriff ist vorübergehend eingeschränkt". Dort gibt es ohnehin keine Werbung.
+  for (const host of PAYMENT_ALLOW) await addWhitelistFilters(host);
+  for (const host of settings.get('whitelist', [])) await addWhitelistFilters(host);
+}
+
 async function initAdblock() {
   try {
     const { ElectronBlocker } = await import('@ghostery/adblocker-electron');
+    try { const { Request } = await import('@ghostery/adblocker'); AdblockRequest = Request; } catch {}
     const cachePath = path.join(app.getPath('userData'), ADBLOCK_CACHE);
 
-    // Veralteten Cache verwerfen, damit die Listen frisch geladen werden
-    // Abgelaufenen Cache NICHT mehr loeschen: frueher wurden dann beim Start alle Listen neu
-    // heruntergeladen und kompiliert (mehrere MB, CPU-schwer) → „Browser braucht ewig zum Starten".
-    // Jetzt: den vorhandenen Cache sofort laden (Start in Sekundenbruchteilen) und die Listen
-    // unbemerkt im Hintergrund aktualisieren (refreshAdblockLists weiter unten).
+    // Abgelaufenen Cache NICHT loeschen: sofort laden (schneller Start), Listen später
+    // unsichtbar im Hintergrund erneuern (refreshAdblockLists).
     let cacheStale = false;
     try {
       const st = fs.statSync(cachePath);
       cacheStale = Date.now() - st.mtimeMs > ADBLOCK_MAX_AGE;
     } catch {}
 
-    whitelistFilters.clear();
     const urls = enabledFilterUrls();
-    const cosmetic = settings.get('cosmeticEnabled', true);
-    const engineConfig = {
-      enableCompression: true,
-      loadCosmeticFilters: cosmetic,
-      loadGenericCosmeticsFilters: cosmetic,
-      loadNetworkFilters: true,
-      enableHtmlFiltering: true,
-      enableMutationObserver: true,
-    };
-    try {
-      blocker = await ElectronBlocker.fromLists(fetch, urls, engineConfig, {
-        path: cachePath,
-        read: fsp.readFile,
-        write: fsp.writeFile,
-      });
-    } catch (err) {
-      // Fallback: vorkompilierte Engine vom Ghostery-CDN
-      console.error('[adblock] fromLists failed, falling back:', err.message);
-      blocker = await ElectronBlocker.fromPrebuiltAdsAndTracking(fetch, {
-        path: path.join(app.getPath('userData'), 'adblock-engine-fallback.bin'),
-        read: fsp.readFile,
-        write: fsp.writeFile,
-      });
+    const engineConfig = currentEngineConfig();
+
+    // 1) Cache laden (reines Deserialisieren — Millisekunden, blockiert nichts spürbar)
+    let engine = null;
+    if (fs.existsSync(cachePath)) {
+      try { engine = ElectronBlocker.deserialize(await fsp.readFile(cachePath)); }
+      catch (e) { console.warn('[adblock] Cache unlesbar — baue neu:', e.message); engine = null; }
+    }
+    // 2) Kein (lesbarer) Cache → Engine im Worker bauen (Haupt-Thread bleibt frei)
+    if (!engine) {
+      const data = await buildEngineInWorker(urls, engineConfig);
+      try { await fsp.writeFile(cachePath, data); } catch {}
+      engine = ElectronBlocker.deserialize(data);
+      cacheStale = false;
     }
 
-    const onBlocked = (request) => {
-      settings.set('totalBlocked', settings.get('totalBlocked', 0) + 1);
-      const tabId = request.tabId;
-      if (typeof tabId === 'number' && tabId >= 0) {
-        tabBlockCounts.set(tabId, (tabBlockCounts.get(tabId) || 0) + 1);
-        try {
-          const host = new URL(request.url).hostname.replace(/^www\./, '');
-          let hosts = tabBlockHosts.get(tabId);
-          if (!hosts) { hosts = new Map(); tabBlockHosts.set(tabId, hosts); }
-          hosts.set(host, (hosts.get(host) || 0) + 1);
-        } catch {}
-      }
-      throttleStats();
-    };
-    blocker.on('request-blocked', onBlocked);
-    blocker.on('request-redirected', onBlocked);
-    try { const { Request } = await import('@ghostery/adblocker'); AdblockRequest = Request; } catch {}
-
-    // ---- Ausnahme-Seiten vollständig vom Cosmetic-Teil befreien ----------------------------------
-    // Der Adblocker registriert ein EIGENES Preload-Script in der Session. Das haengt einen
-    // MutationObserver ueber das gesamte DOM und schickt bei jeder Aenderung IPC-Anfragen an den
-    // Hauptprozess, um Element-Hiding und Scriptlets nachzuladen. Auf YouTube (permanente
-    // DOM-Aenderungen) erzeugt das eine IPC-Flut: die Seite bleibt im Ladezustand stehen und
-    // reagiert auf keinen Klick. Eine reine Netzwerk-Ausnahme (Whitelist) hilft dagegen NICHT —
-    // deshalb hier die Handler selbst abklemmen. Muss VOR enableBlockingInSession geschehen.
-    const cosmeticExempt = (url) => {
-      try { const h = new URL(url).hostname.toLowerCase(); return PAYMENT_ALLOW.some((d) => h === d || h.endsWith('.' + d)); }
-      catch { return false; }
-    };
-    const origInject = blocker.onInjectCosmeticFilters;
-    blocker.onInjectCosmeticFilters = async (event, url, msg) => {
-      if (cosmeticExempt(url)) return;                       // keine Filter/Scriptlets ausliefern
-      return origInject.call(blocker, event, url, msg);
-    };
-    const origMutObs = blocker.onIsMutationObserverEnabled;
-    blocker.onIsMutationObserverEnabled = async (event) => {
-      try { if (cosmeticExempt(event.sender.getURL() || '')) return false; } catch {}   // DOM-Beobachter aus
-      return origMutObs.call(blocker, event);
-    };
-
-    // Eigene Filterregeln des Nutzers anwenden
-    await applyCustomFilters();
-
-    // Zahlungs-, Banking- und Anmeldedienste NIE filtern: sie prüfen aktiv, ob Skripte blockiert
-    // werden (Betrugs-/Bot-Erkennung) und sperren sonst den Zugriff — bei PayPal z. B. mit
-    // „Der Zugriff ist vorübergehend eingeschränkt". Dort gibt es ohnehin keine Werbung.
-    for (const host of PAYMENT_ALLOW) await addWhitelistFilters(host);
-
-    // Whitelist aus Settings anwenden
-    for (const host of settings.get('whitelist', [])) await addWhitelistFilters(host);
+    blocker = engine;
+    wireEngine(blocker);
+    await applyEngineExtras();
 
     if (settings.get('adblockEnabled', true)) enableBlocking();
     console.log(`[adblock] engine ready — ${urls.length} Listen aktiv`);
@@ -341,6 +369,8 @@ async function initAdblock() {
     if (cacheStale) setTimeout(() => { refreshAdblockLists().catch(() => {}); }, 25000);
   } catch (err) {
     console.error('[adblock] init failed:', err.message);
+    // z. B. offline beim allerersten Start (noch kein Cache) → später erneut versuchen
+    if (!blocker) setTimeout(() => { initAdblock().catch(() => {}); }, 120000);
   }
 }
 
@@ -1754,20 +1784,25 @@ async function loadStoredExtensions() {
 
 // Adblock
 let adblockBusy = false;
-// Listen im Hintergrund aktualisieren, OHNE Schutzluecke: die alte Engine bleibt aktiv, bis die
-// frische fertig gebaut ist — dann wird in einem Wimpernschlag getauscht. Der Nutzer merkt nichts.
+// Listen im Hintergrund aktualisieren, OHNE Schutzluecke und OHNE den Haupt-Thread zu blockieren:
+// der Worker baut die frische Engine, die alte blockt solange weiter — getauscht wird in
+// Millisekunden. Der Nutzer merkt nichts (kein „Keine Rückmeldung" mehr).
 async function refreshAdblockLists() {
   if (adblockBusy) return false;
   adblockBusy = true;
   try {
+    const { ElectronBlocker } = await import('@ghostery/adblocker-electron');
+    const cachePath = path.join(app.getPath('userData'), ADBLOCK_CACHE);
+    const data = await buildEngineInWorker(enabledFilterUrls(), currentEngineConfig());
+    try { await fsp.writeFile(cachePath, data); } catch {}
+    const fresh = ElectronBlocker.deserialize(data);
     const old = blocker;
-    try { fs.unlinkSync(path.join(app.getPath('userData'), ADBLOCK_CACHE)); } catch {}
-    await initAdblock();   // baut eine frische Engine (inkl. Whitelists/Custom-Filter/Ausnahmen)
-    if (blocker && old && blocker !== old) {
-      try { old.disableBlockingInSession(ses); } catch {}
-      blockingActive = false;
-      if (settings.get('adblockEnabled', true)) enableBlocking();
-    }
+    blocker = fresh;
+    wireEngine(fresh);
+    await applyEngineExtras();
+    if (old) { try { old.disableBlockingInSession(ses); } catch {} }
+    blockingActive = false;
+    if (settings.get('adblockEnabled', true)) enableBlocking();
     console.log('[adblock] Listen im Hintergrund aktualisiert');
     return true;
   } catch (err) {
